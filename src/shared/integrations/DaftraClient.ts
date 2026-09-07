@@ -10,6 +10,7 @@ export class DaftraClient {
     this.client = axios.create({
       baseURL: baseURL || env.daftra.baseUrl,
       headers: {
+        'apikey': apiKey || env.daftra.apiKey,
         'API-KEY': apiKey || env.daftra.apiKey,
         'Content-Type': 'application/json',
         Accept: 'application/json',
