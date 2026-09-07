@@ -22,10 +22,13 @@ export const createApp = (): Application => {
   // Security HTTP headers
   app.use(helmet());
 
-  // CORS configuration
+  // CORS configuration: دعم الاتصال من أي دومين للفرونت إند (Vercel أو الدومين الخاص أو لوكال)
   app.use(
     cors({
-      origin: [env.clientUrl, 'http://localhost:5173', 'http://localhost:3000'],
+      origin: (origin, callback) => {
+        // السماح بالاتصال مع إرجاع الدومين لضمان عمل الـ credentials
+        callback(null, true);
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
