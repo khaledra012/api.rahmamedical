@@ -12,8 +12,8 @@ yarn-error.log*
 # Compiled output
 dist/
 
-# Logs
-logs/
+# Logs directory at root
+/logs/
 *.log
 
 # OS & Editor
