@@ -97,17 +97,16 @@ export class DaftraClient {
    */
   public async searchProductBySku(sku: string): Promise<any> {
     try {
-      const res: any = await this.request({
-        method: 'GET',
-        url: `/products.json`,
-        params: { 'filter[product_code]': sku, limit: 1 },
+      const res: any = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/product/list', {
+        params: { 'filter[product_code]': sku },
       });
-      if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
-        return res.data[0].Product || res.data[0];
+      const list = res?.data?.data || res?.data;
+      if (Array.isArray(list) && list.length > 0) {
+        return list[0];
       }
       return null;
-    } catch (err) {
-      logger.warn(`[DaftraClient] Could not find product by SKU "${sku}" in Daftra:`, (err as any)?.message);
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] Could not find product by SKU "${sku}" in Daftra:`, err.message);
       return null;
     }
   }
@@ -118,17 +117,16 @@ export class DaftraClient {
    */
   public async searchProductByBarcode(barcode: string): Promise<any> {
     try {
-      const res: any = await this.request({
-        method: 'GET',
-        url: `/products.json`,
-        params: { 'filter[barcode]': barcode, limit: 1 },
+      const res: any = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/product/list', {
+        params: { 'filter[barcode]': barcode },
       });
-      if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
-        return res.data[0].Product || res.data[0];
+      const list = res?.data?.data || res?.data;
+      if (Array.isArray(list) && list.length > 0) {
+        return list[0];
       }
       return null;
-    } catch (err) {
-      logger.warn(`[DaftraClient] Could not find product by Barcode "${barcode}" in Daftra:`, (err as any)?.message);
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] Could not find product by Barcode "${barcode}" in Daftra:`, err.message);
       return null;
     }
   }

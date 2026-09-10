@@ -327,7 +327,10 @@ export class OrderService {
 
     // بناء بنود الأصناف (Invoice Items)
     const invoiceItems = items.map((item) => ({
+      product_id: item.daftraProductId!,
       item_id: item.daftraProductId!,
+      item: item.productName,
+      description: item.productName,
       unit_price: item.unitPrice,
       quantity: item.quantity,
       discount: item.discount || 0,
@@ -338,7 +341,7 @@ export class OrderService {
     // إضافة سطر الشحن (إن وُجد)
     if (order.shippingFee > 0) {
       invoiceItems.push({
-        item_id: 0,
+        item: 'رسوم الشحن والتوصيل',
         description: 'رسوم الشحن والتوصيل',
         unit_price: order.shippingFee,
         quantity: 1,

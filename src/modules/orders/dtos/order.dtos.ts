@@ -88,7 +88,9 @@ export interface DaftraInvoicePayload {
     discount_type?: number;
   };
   InvoiceItem: Array<{
+    product_id?: number;
     item_id?: number;
+    item?: string;
     item_name?: string;
     description?: string;
     unit_price: number;
