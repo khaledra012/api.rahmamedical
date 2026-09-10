@@ -30,14 +30,15 @@ export interface ZidProductPayload {
 export class ZidClient {
   private client: AxiosInstance;
 
-  constructor(baseURL?: string, token?: string, storeId?: string) {
+  constructor(baseURL?: string, token?: string, storeId?: string, managerToken?: string) {
+    const authJwt = token || env.zid.token;
+    const mgrToken = managerToken || env.zid.managerToken || authJwt;
     this.client = axios.create({
       baseURL: baseURL || env.zid.baseUrl,
       headers: {
-        Authorization: `Bearer ${token || env.zid.token}`,
-        'X-Manager-Token': token || env.zid.token,
+        Authorization: `Bearer ${authJwt}`,
+        'X-Manager-Token': mgrToken,
         'Store-Id': storeId || env.zid.storeId,
-        'Content-Type': 'application/json',
         Accept: 'application/json',
       },
       timeout: 20000,
@@ -86,6 +87,7 @@ export class ZidClient {
     return this.request({
       method: 'POST',
       url: '/products',
+      headers: { 'Content-Type': 'application/json' },
       data: payload,
     });
   }
@@ -97,6 +99,7 @@ export class ZidClient {
     return this.request({
       method: 'PATCH',
       url: `/products/${zidProductId}`,
+      headers: { 'Content-Type': 'application/json' },
       data: payload,
     });
   }
@@ -118,6 +121,7 @@ export class ZidClient {
     return this.request({
       method: 'PATCH',
       url: `/products/${zidProductId}`,
+      headers: { 'Content-Type': 'application/json' },
       data: {
         stocks: [
           {
@@ -136,6 +140,7 @@ export class ZidClient {
     return this.request({
       method: 'GET',
       url: '/managers/store/orders',
+      headers: { 'Accept-Language': 'ar' },
       params: {
         page,
         per_page: perPage,

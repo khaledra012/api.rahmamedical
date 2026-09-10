@@ -85,6 +85,7 @@ export const env = {
   zid: {
     baseUrl: process.env.ZID_API_BASE_URL || 'https://api.zid.sa/v1',
     token: process.env.ZID_API_TOKEN || 'test_zid_token',
+    managerToken: process.env.ZID_MANAGER_TOKEN || process.env.ZID_API_TOKEN || '',
     storeId: process.env.ZID_STORE_ID || 'test_store_id',
   },
 

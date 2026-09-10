@@ -38,6 +38,7 @@ describe('ZidClient Unit Tests', () => {
       expect(mockAxiosInstance.request).toHaveBeenCalledWith({
         method: 'POST',
         url: '/products',
+        headers: { 'Content-Type': 'application/json' },
         data: payload,
       });
       expect(result.product.id).toBe(mockZidProductCreatedResponse.product.id);
@@ -105,6 +106,7 @@ describe('ZidClient Unit Tests', () => {
       expect(mockAxiosInstance.request).toHaveBeenCalledWith({
         method: 'PATCH',
         url: '/products/zid-123',
+        headers: { 'Content-Type': 'application/json' },
         data: { price: 30.0 },
       });
       expect(result.product.price).toBe(30.0);
