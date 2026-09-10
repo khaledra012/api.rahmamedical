@@ -148,6 +148,18 @@ export class ZidClient {
       },
     });
   }
+
+  /**
+   * Get full order details from Zid store (including products and line items)
+   */
+  public async getOrderDetails(orderId: string | number): Promise<any> {
+    return this.request({
+      method: 'GET',
+      url: `/managers/store/orders/${orderId}/view`,
+      headers: { 'Accept-Language': 'ar' },
+    });
+  }
 }
 
 export const zidClient = new ZidClient();
+

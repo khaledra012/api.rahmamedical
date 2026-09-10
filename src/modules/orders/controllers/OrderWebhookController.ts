@@ -15,6 +15,15 @@ export class OrderWebhookController {
 
     const raw = req.body?.payload || req.body?.order || req.body?.data || req.body;
 
+    // تجاهل إشعارات التحقق التجريبية (Verification Ping / Handshake) الخالية من بيانات الطلب
+    if (!raw || (!raw.id && !raw.order_id && !raw.code && (!raw.items || raw.items.length === 0) && (!raw.products || raw.products.length === 0))) {
+      logger.info('[Webhook] Received empty or verification ping from Zid. Responding 200 OK.');
+      return res.status(200).json({
+        success: true,
+        message: 'تم استقبال إشعار التحقق بنجاح',
+      });
+    }
+
     const rawItems = raw.items || raw.products || raw.order_items || [];
     const items = rawItems.map((item: any) => {
       const p = item.product || {};
@@ -29,6 +38,16 @@ export class OrderWebhookController {
         lineTotal: parseFloat(item.total || item.line_total || 0),
       };
     });
+
+    const paymentMethodCode =
+      raw.payment?.method?.code ||
+      (typeof raw.payment?.method === 'string' ? raw.payment.method : null) ||
+      raw.payment_method?.code ||
+      (typeof raw.payment_method === 'string' ? raw.payment_method : null) ||
+      raw.payments?.[0]?.code ||
+      raw.payment?.method?.name ||
+      raw.payment_method_name ||
+      'unknown';
 
     const payload: IncomingOrderPayload = {
       storeOrderId: `ZID-${raw.id || raw.order_id || raw.code || Date.now()}`,
@@ -53,13 +72,8 @@ export class OrderWebhookController {
       ]
         .filter(Boolean)
         .join(', ') || null,
-      paymentMethod: String(
-        raw.payment_method ||
-        raw.payment?.method ||
-        raw.payment_method_name ||
-        raw.payment?.method_name ||
-        'unknown'
-      ).toLowerCase(),
+      paymentMethod: String(paymentMethodCode).toLowerCase(),
+
       items,
       subtotal: parseFloat(raw.sub_total || raw.subtotal || 0),
       shippingFee: parseFloat(raw.shipping_cost || raw.shipping_fee || raw.shipping?.cost || 0),

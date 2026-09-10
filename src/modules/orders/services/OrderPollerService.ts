@@ -127,7 +127,19 @@ export class OrderPollerService {
 
       for (const rawOrder of candidateOrders) {
         try {
-          const rawItems = rawOrder.items || rawOrder.products || rawOrder.order_items || [];
+          let detailedOrder = rawOrder;
+          if ((!rawOrder.products || rawOrder.products.length === 0) && (!rawOrder.items || rawOrder.items.length === 0)) {
+            try {
+              const fullDetails = await zidClient.getOrderDetails(rawOrder.id);
+              if (fullDetails?.order) {
+                detailedOrder = fullDetails.order;
+              }
+            } catch (err: any) {
+              logger.warn(`[OrderPoller] Could not fetch detailed order for #${rawOrder.id}: ${err.message}`);
+            }
+          }
+
+          const rawItems = detailedOrder.products || detailedOrder.items || detailedOrder.order_items || [];
           const items = rawItems.map((item: any) => {
             const p = item.product || {};
             return {
@@ -142,45 +154,50 @@ export class OrderPollerService {
             };
           });
 
+          const paymentMethodCode =
+            detailedOrder.payment?.method?.code ||
+            (typeof detailedOrder.payment?.method === 'string' ? detailedOrder.payment.method : null) ||
+            detailedOrder.payment_method?.code ||
+            (typeof detailedOrder.payment_method === 'string' ? detailedOrder.payment_method : null) ||
+            detailedOrder.payments?.[0]?.code ||
+            detailedOrder.payment?.method?.name ||
+            detailedOrder.payment_method_name ||
+            'unknown';
+
           const payload = {
-            storeOrderId: `ZID-${rawOrder.id || rawOrder.order_id || rawOrder.code}`,
+            storeOrderId: `ZID-${detailedOrder.id || detailedOrder.order_id || detailedOrder.code}`,
             storeType: 'ZID' as const,
             customerName:
-              rawOrder.customer?.name ||
-              (rawOrder.customer?.first_name ? `${rawOrder.customer.first_name} ${rawOrder.customer.last_name || ''}`.trim() : null) ||
-              rawOrder.shipping?.name ||
-              rawOrder.shipping_address?.name ||
+              detailedOrder.customer?.name ||
+              (detailedOrder.customer?.first_name ? `${detailedOrder.customer.first_name} ${detailedOrder.customer.last_name || ''}`.trim() : null) ||
+              detailedOrder.shipping?.name ||
+              detailedOrder.shipping_address?.name ||
               'عميل زد',
             customerPhone:
-              rawOrder.customer?.mobile ||
-              rawOrder.customer?.phone ||
-              rawOrder.shipping?.phone ||
-              rawOrder.shipping_address?.phone ||
+              detailedOrder.customer?.mobile ||
+              detailedOrder.customer?.phone ||
+              detailedOrder.shipping?.phone ||
+              detailedOrder.shipping_address?.phone ||
               '',
-            customerEmail: rawOrder.customer?.email || null,
+            customerEmail: detailedOrder.customer?.email || null,
             shippingAddress: [
-              rawOrder.shipping?.street || rawOrder.shipping_address?.street,
-              rawOrder.shipping?.city || rawOrder.shipping_address?.city,
-              rawOrder.shipping?.district || rawOrder.shipping_address?.district,
+              detailedOrder.shipping?.street || detailedOrder.shipping_address?.street,
+              detailedOrder.shipping?.city || detailedOrder.shipping_address?.city,
+              detailedOrder.shipping?.district || detailedOrder.shipping_address?.district,
             ]
               .filter(Boolean)
               .join(', ') || null,
-            paymentMethod: String(
-              rawOrder.payment_method ||
-              rawOrder.payment?.method ||
-              rawOrder.payment_method_name ||
-              rawOrder.payment?.method_name ||
-              'unknown'
-            ).toLowerCase(),
+            paymentMethod: String(paymentMethodCode).toLowerCase(),
             items,
-            subtotal: parseFloat(rawOrder.sub_total || rawOrder.subtotal || 0),
-            shippingFee: parseFloat(rawOrder.shipping_cost || rawOrder.shipping_fee || rawOrder.shipping?.cost || 0),
-            discountAmount: parseFloat(rawOrder.discount || rawOrder.discount_amount || rawOrder.total_discount || 0),
-            taxAmount: parseFloat(rawOrder.tax_amount || rawOrder.tax || 0),
-            totalAmount: parseFloat(rawOrder.total || rawOrder.total_amount || rawOrder.order_total || 0),
-            orderDate: rawOrder.created_at || rawOrder.order_date || rawOrder.date || new Date().toISOString(),
-            rawOrderData: rawOrder,
+            subtotal: parseFloat(detailedOrder.sub_total || detailedOrder.subtotal || 0),
+            shippingFee: parseFloat(detailedOrder.shipping_cost || detailedOrder.shipping_fee || detailedOrder.shipping?.cost || 0),
+            discountAmount: parseFloat(detailedOrder.discount || detailedOrder.discount_amount || detailedOrder.total_discount || 0),
+            taxAmount: parseFloat(detailedOrder.tax_amount || detailedOrder.tax || 0),
+            totalAmount: parseFloat(detailedOrder.total || detailedOrder.total_amount || detailedOrder.order_total || 0),
+            orderDate: detailedOrder.created_at || detailedOrder.order_date || detailedOrder.date || new Date().toISOString(),
+            rawOrderData: detailedOrder,
           };
+
           await orderService.handleIncomingOrder(payload);
           processedCount++;
 
