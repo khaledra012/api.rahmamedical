@@ -142,7 +142,7 @@ export class DaftraClient {
       const res: any = await this.request({
         method: 'GET',
         url: `/invoices.json`,
-        params: { 'filter[notes]': storeOrderId, limit: 10 },
+        params: { 'filter[notes]': storeOrderId, limit: 50 },
       });
       if (res?.data && Array.isArray(res.data)) {
         for (const item of res.data) {

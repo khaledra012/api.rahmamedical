@@ -298,7 +298,9 @@ export class OrderService {
     const invoicePayload: DaftraInvoicePayload = {
       Invoice: {
         client_id: clientId,
+        client_email: order.customerEmail || 'orders@rahmamedical.online',
         storehouse_id: env.daftra.storehouseId,
+        draft: 1,
         is_draft: 1, // مسودة صامتة — لا خصم ولا قيود حتى الاعتماد
         notes: invoiceNotes,
         date:
@@ -313,21 +315,25 @@ export class OrderService {
           : {}),
       },
       InvoiceItem: invoiceItems,
-      Payment: [
-        {
-          treasury_id: paymentMapping.treasuryId,
-          paid_amount: order.totalAmount,
-          payment_method: paymentMapping.paymentMethodKey,
-        },
-      ],
     };
 
     // إرسال لدفترة عبر DaftraClient
-    const response = await daftraClient.createInvoice(invoicePayload);
+    const response: any = await daftraClient.createInvoice(invoicePayload);
+
+    const invoiceId = parseInt(
+      String(response?.id || response?.data?.Invoice?.id || response?.data?.id || 0),
+      10
+    );
+    const invoiceNumber = String(
+      response?.invoice_number ||
+        response?.data?.Invoice?.number ||
+        response?.data?.number ||
+        `DRAFT-${order.id}`
+    );
 
     return {
-      invoiceId: response.data?.Invoice?.id || 0,
-      invoiceNumber: response.data?.Invoice?.number || `DRAFT-${order.id}`,
+      invoiceId,
+      invoiceNumber,
     };
   }
 

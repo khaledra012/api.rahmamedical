@@ -78,21 +78,26 @@ export interface OrderStatsDTO {
 export interface DaftraInvoicePayload {
   Invoice: {
     client_id: number;
+    client_email?: string;
     storehouse_id: number;
+    draft?: number;
     is_draft: number;
     notes: string;
     date?: string;
+    discount?: number;
+    discount_type?: number;
   };
   InvoiceItem: Array<{
     item_id?: number;
     item_name?: string;
+    description?: string;
     unit_price: number;
     quantity: number;
     discount?: number;
     tax1?: number;
     account_id: number;
   }>;
-  Payment: Array<{
+  Payment?: Array<{
     treasury_id: number;
     paid_amount: number;
     payment_method?: string;

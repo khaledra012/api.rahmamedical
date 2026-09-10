@@ -173,8 +173,9 @@ describe('OrderService Unit Tests', () => {
       // Verify the payload sent to Daftra
       const sentPayload = (MockDaftraClient.createInvoice as jest.Mock).mock.calls[0][0];
       expect(sentPayload.Invoice.is_draft).toBe(1);
+      expect(sentPayload.Invoice.draft).toBe(1);
       expect(sentPayload.Invoice.storehouse_id).toBe(3);
-      expect(sentPayload.Payment[0].treasury_id).toBe(19);
+      expect(result.treasuryId).toBe(19);
     });
   });
 
@@ -244,7 +245,7 @@ describe('OrderService Unit Tests', () => {
       // Verify revenue account is the Trendyol-specific one (4690)
       const sentPayload = (MockDaftraClient.createInvoice as jest.Mock).mock.calls[0][0];
       expect(sentPayload.InvoiceItem[0].account_id).toBe(4690);
-      expect(sentPayload.Payment[0].treasury_id).toBe(25);
+      expect(result.treasuryId).toBe(25);
       // Verify notes mention ترينديول
       expect(sentPayload.Invoice.notes).toContain('ترينديول');
     });
