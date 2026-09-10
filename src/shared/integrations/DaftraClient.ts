@@ -139,10 +139,15 @@ export class DaftraClient {
       const res: any = await this.request({
         method: 'GET',
         url: `/invoices.json`,
-        params: { 'filter[notes]': storeOrderId, limit: 1 },
+        params: { 'filter[notes]': storeOrderId, limit: 10 },
       });
-      if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
-        return res.data[0].Invoice || res.data[0];
+      if (res?.data && Array.isArray(res.data)) {
+        for (const item of res.data) {
+          const inv = item.Invoice || item;
+          if (inv && inv.notes && typeof inv.notes === 'string' && inv.notes.includes(storeOrderId)) {
+            return inv;
+          }
+        }
       }
       return null;
     } catch (err) {
@@ -150,6 +155,7 @@ export class DaftraClient {
       return null;
     }
   }
+
 
   /**
    * Create a draft invoice in Daftra (إنشاء مسودة فاتورة في دفترة)
