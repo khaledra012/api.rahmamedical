@@ -39,9 +39,11 @@ export class DaftraClient {
     } catch (error: any) {
       if (error.response) {
         const status = error.response.status;
-        const message = error.response.data?.message || error.message;
+        const errData = error.response.data;
+        const detail = errData?.errors || errData?.validation_errors || errData?.error || '';
+        const message = `${errData?.message || error.message} ${detail ? JSON.stringify(detail) : ''}`.trim();
 
-        logger.error(`[DaftraClient] Request failed (${status}):`, message);
+        logger.error(`[DaftraClient] Request failed (${status}):`, message, JSON.stringify(errData));
 
         if (status === 401 || status === 403) {
           throw new UnauthorizedError('فشل الاتصال بدفترة: مفتاح الـ API غير صالح أو انتهت صلاحيته');
@@ -51,6 +53,7 @@ export class DaftraClient {
         }
         throw new AppError(`خطأ في استجابة دفترة: ${message}`, status);
       }
+
 
       logger.error('[DaftraClient] Network or timeout error:', error.message);
       throw new AppError(`تعذر الاتصال بخادم دفترة: ${error.message}`, 503);
