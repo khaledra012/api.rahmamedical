@@ -10,6 +10,7 @@ import { authRoutes } from './modules/auth/routes/auth.routes';
 import { productRoutes } from './modules/products/routes/product.routes';
 import orderRoutes from './modules/orders/routes/order.routes';
 import orderWebhookRoutes from './modules/orders/routes/order-webhook.routes';
+import { webhookRoutes as productWebhookRoutes } from './modules/products/routes/webhook.routes';
 import logRoutes from './modules/logs/routes/log.routes';
 import { apiRateLimiter } from './shared/middlewares/rateLimiter';
 
@@ -72,6 +73,7 @@ export const createApp = (): Application => {
   // Public Routes
   app.use('/api/auth', authRoutes);
   app.use('/api/webhooks', orderWebhookRoutes);
+  app.use('/api/webhooks/daftra', productWebhookRoutes);
 
   // Protected Modules Routes
   app.use('/api/products', authMiddleware, productRoutes);
