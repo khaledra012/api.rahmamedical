@@ -184,6 +184,63 @@ export class DaftraClient {
   }
 
   /**
+   * Search client in Daftra by phone
+   */
+  public async searchClientByPhone(phone: string): Promise<any> {
+    try {
+      const cleanPhone = phone.replace(/[\s\-\+]/g, '');
+      const res: any = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/client/list', {
+        params: { 'filter[phone1]': cleanPhone },
+      });
+      const list = res?.data?.data || res?.data;
+      if (Array.isArray(list) && list.length > 0) {
+        return list[0];
+      }
+      return null;
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] Could not search client by phone "${phone}":`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Search client in Daftra by email
+   */
+  public async searchClientByEmail(email: string): Promise<any> {
+    try {
+      const res: any = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/client/list', {
+        params: { 'filter[email]': email },
+      });
+      const list = res?.data?.data || res?.data;
+      if (Array.isArray(list) && list.length > 0) {
+        return list[0];
+      }
+      return null;
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] Could not search client by email "${email}":`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Create client in Daftra
+   */
+  public async createClient(clientData: {
+    business_name: string;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    phone1?: string;
+    address1?: string;
+  }): Promise<any> {
+    return this.request({
+      method: 'POST',
+      url: `/clients.json`,
+      data: { Client: clientData },
+    });
+  }
+
+  /**
    * Get list of treasuries from Daftra
    */
   public async getTreasuries(): Promise<any> {

@@ -245,6 +245,54 @@ export class OrderService {
     return mapping || null;
   }
 
+  /**
+   * البحث عن العميل أو إنشاؤه في دفترة باسمه الحقيقي (Client Resolver & Creator)
+   */
+  private async resolveOrCreateClient(
+    customerName: string,
+    customerPhone?: string | null,
+    customerEmail?: string | null,
+    shippingAddress?: string | null,
+    storeType?: string
+  ): Promise<number> {
+    try {
+      // 1. البحث برقم الهاتف
+      if (customerPhone) {
+        const clientByPhone = await daftraClient.searchClientByPhone(customerPhone);
+        if (clientByPhone?.id) return parseInt(String(clientByPhone.id), 10);
+      }
+
+      // 2. البحث بالبريد الإلكتروني (إن وجد وغير افتراضي)
+      if (customerEmail && !customerEmail.includes('example.com') && !customerEmail.includes('orders@rahmamedical')) {
+        const clientByEmail = await daftraClient.searchClientByEmail(customerEmail);
+        if (clientByEmail?.id) return parseInt(String(clientByEmail.id), 10);
+      }
+
+      // 3. إنشاء عميل جديد في دفترة باسمه الحقيقي
+      const name = (customerName || '').trim();
+      if (name) {
+        const nameParts = name.split(/\s+/);
+        const firstName = nameParts[0] || name;
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        const created = await daftraClient.createClient({
+          business_name: name,
+          first_name: firstName,
+          last_name: lastName,
+          email: customerEmail || `customer_${Date.now()}@rahmamedical.online`,
+          phone1: customerPhone || undefined,
+          address1: shippingAddress || undefined,
+        });
+
+        if (created?.id) return parseInt(String(created.id), 10);
+      }
+    } catch (err: any) {
+      logger.warn(`[OrderService] Could not resolve/create client for "${customerName}": ${err.message}. Using default client.`);
+    }
+
+    return storeType === 'ZID' ? env.daftra.zidGuestClientId : env.daftra.defaultClientId;
+  }
+
   // ──────────────────────────────────────────────────────────────
   // 4. بناء وإرسال مسودة الفاتورة لدفترة (Daftra Draft Invoice Builder)
   // ──────────────────────────────────────────────────────────────
@@ -257,8 +305,14 @@ export class OrderService {
     const revenueAccountId =
       order.storeType === 'ZID' ? env.daftra.zidRevenueAccountId : env.daftra.trendyolRevenueAccountId;
 
-    // تحديد معرف العميل حسب المتجر
-    const clientId = order.storeType === 'ZID' ? env.daftra.zidGuestClientId : env.daftra.defaultClientId;
+    // تحديد معرف العميل باسمه الحقيقي في دفترة
+    const clientId = await this.resolveOrCreateClient(
+      order.customerName,
+      order.customerPhone,
+      order.customerEmail,
+      order.shippingAddress,
+      order.storeType
+    );
 
     // بناء ملاحظات الفاتورة (Customer details in notes)
     const invoiceNotes = [
