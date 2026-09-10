@@ -20,9 +20,10 @@ const startServer = async (): Promise<void> => {
     // Seed default payment mappings for Module 5 if not present
     await seedPaymentMappings();
 
-    // Start 5-Minute Background Pollers
-    orderPollerService.startPolling(5);
-    productPollerService.startPolling(5);
+    // Background Pollers: تم إيقاف سحب طلبات زد دورياً والاعتماد حصرياً على الويب هوك المباشر
+    // orderPollerService.startPolling(5);
+    productPollerService.startPolling(5); // فحص وتحديث منتجات دفترة دورياً كل 5 دقائق
+
 
     // Start Express Server
     const server = app.listen(env.port, () => {

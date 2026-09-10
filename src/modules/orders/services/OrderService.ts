@@ -6,8 +6,10 @@ import { Product } from '../../products/models/Product';
 import { ProductMapping } from '../../products/models/ProductMapping';
 import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
+import { zidClient } from '../../../shared/integrations/ZidClient';
 import { env } from '../../../config/env';
 import { logger } from '../../../shared/helpers/logger';
+
 import { NotFoundError, ConflictError } from '../../../shared/errors';
 import {
   IncomingOrderPayload,
@@ -345,7 +347,50 @@ export class OrderService {
     }
 
     // إعادة بناء الـ Payload من البيانات المحفوظة
-    const orderItems = await OrderItem.findAll({ where: { orderId: order.id } });
+    let orderItems = await OrderItem.findAll({ where: { orderId: order.id } });
+
+    // إذا كان الطلب بدون بنود (مثل الطلبات المسحوبة سابقاً كملخص)، نحاول جلب تفاصيل الأصناف من زد
+    if (orderItems.length === 0 && order.storeType === 'ZID') {
+      try {
+        const raw = order.rawOrderData as any;
+        const zidId = raw?.id || raw?.order_id || String(order.storeOrderId).replace('ZID-', '');
+        if (zidId) {
+          const fullDetails = await zidClient.getOrderDetails(zidId);
+          const rawProducts = fullDetails?.order?.products || fullDetails?.order?.items || [];
+          for (const item of rawProducts) {
+            const p = item.product || {};
+            const sku = item.sku || p.sku || item.product_sku || '';
+            const barcode = item.barcode || p.barcode || null;
+            const matchedProduct = await this.matchProductToDaftra(sku, barcode || undefined);
+
+            await OrderItem.create({
+              orderId: order.id,
+              sku,
+              barcode,
+              productName: item.name || p.name || item.product_name || 'صنف',
+              quantity: parseInt(item.quantity as any, 10) || 1,
+              unitPrice: parseFloat(item.price || item.unit_price || 0),
+              discount: parseFloat(item.discount || 0),
+              taxPercentage: parseFloat(item.tax_percent || item.tax_percentage || 15),
+              lineTotal: parseFloat(item.total || item.line_total || 0),
+              daftraProductId: matchedProduct?.daftraProductId || null,
+              matchStatus: matchedProduct ? 'MATCHED' : 'UNMATCHED',
+            });
+          }
+          orderItems = await OrderItem.findAll({ where: { orderId: order.id } });
+        }
+      } catch (fetchErr: any) {
+        logger.warn(`[OrderService] Could not backfill items for order #${order.id}: ${fetchErr.message}`);
+      }
+    }
+
+    // إذا ظل الطلب بدون أصناف، نمنع الإرسال لدفترة لتفادي خطأ 400 (فاتورة فارغة)
+    if (orderItems.length === 0) {
+      order.status = 'UNMAPPED_PRODUCT';
+      order.statusMessage = 'لا توجد أصناف مسجلة في هذا الطلب لإصدار فاتورة بها.';
+      await order.save();
+      return order;
+    }
 
     // إعادة فحص وسيلة الدفع
     const paymentMapping = await this.resolvePaymentTreasury(order.paymentMethod);
@@ -373,6 +418,7 @@ export class OrderService {
     const stillUnmatched = orderItems.filter((oi) => oi.matchStatus === 'UNMATCHED');
     if (stillUnmatched.length > 0) {
       order.status = 'UNMAPPED_PRODUCT';
+
       order.statusMessage = `لا تزال هناك أصناف غير مطابقة: [${stillUnmatched.map((o) => o.sku).join(', ')}].`;
       await order.save();
       return order;
