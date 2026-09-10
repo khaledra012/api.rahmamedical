@@ -65,7 +65,7 @@ export class OrderService {
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discount: item.discount || 0,
-        taxPercentage: item.taxPercentage || 15,
+        taxPercentage: item.taxPercentage !== undefined && item.taxPercentage !== null ? item.taxPercentage : 15,
         lineTotal: item.lineTotal,
         daftraProductId: matchedProduct?.daftraProductId || null,
         matchStatus: matchedProduct ? 'MATCHED' : 'UNMATCHED',
@@ -331,7 +331,7 @@ export class OrderService {
       unit_price: item.unitPrice,
       quantity: item.quantity,
       discount: item.discount || 0,
-      tax1: item.taxPercentage === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15TaxId,
+      tax1: item.taxPercentage === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15InclusiveTaxId,
       account_id: revenueAccountId,
     }));
 
@@ -343,7 +343,7 @@ export class OrderService {
         unit_price: order.shippingFee,
         quantity: 1,
         discount: 0,
-        tax1: env.daftra.vat15TaxId, // ربط ضريبة الشحن بمعرّف ضريبة 15% في دفترة
+        tax1: order.taxAmount === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15InclusiveTaxId,
         account_id: env.daftra.shippingRevenueAccountId,
       } as any);
     }

@@ -76,7 +76,8 @@ export const env = {
     trendyolTreasuryId: parseInt(process.env.DAFTRA_TRENDYOL_TREASURY_ID || '25', 10), // prepaid_trendyol
 
     // Taxes
-    vat15TaxId: parseInt(process.env.DAFTRA_VAT_15_TAX_ID || '4', 10), // القيمة المضافة 15%
+    vat15TaxId: parseInt(process.env.DAFTRA_VAT_15_TAX_ID || '4', 10), // القيمة المضافة 15% (غير شاملة)
+    vat15InclusiveTaxId: parseInt(process.env.DAFTRA_VAT_15_INCLUSIVE_TAX_ID || '7', 10), // شامل القيمة المضافة 15%
     vatZeroTaxId: parseInt(process.env.DAFTRA_VAT_ZERO_TAX_ID || '5', 10), // صفرية 0%
     vatExemptTaxId: parseInt(process.env.DAFTRA_VAT_EXEMPT_TAX_ID || '6', 10), // معافاة 0%
   },

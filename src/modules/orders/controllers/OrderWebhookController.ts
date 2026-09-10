@@ -34,7 +34,12 @@ export class OrderWebhookController {
         quantity: parseInt(item.quantity as any, 10) || 1,
         unitPrice: parseFloat(item.price || item.unit_price || 0),
         discount: parseFloat(item.discount || 0),
-        taxPercentage: parseFloat(item.tax_percent || item.tax_percentage || 15),
+        taxPercentage:
+          item.tax_percentage !== undefined && item.tax_percentage !== null
+            ? parseFloat(String(item.tax_percentage))
+            : item.tax_percent !== undefined && item.tax_percent !== null
+            ? parseFloat(String(item.tax_percent))
+            : 15,
         lineTotal: parseFloat(item.total || item.line_total || 0),
       };
     });
@@ -48,6 +53,19 @@ export class OrderWebhookController {
       raw.payment?.method?.name ||
       raw.payment_method_name ||
       'unknown';
+
+    const zidShippingItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'shipping')
+      : null;
+    const zidVatItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'vat')
+      : null;
+    const zidSubtotalItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'sub_totals_before_vat' || entry.code === 'sub_totals_after_vat')
+      : null;
+    const zidTotalItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'total')
+      : null;
 
     const payload: IncomingOrderPayload = {
       storeOrderId: `ZID-${raw.id || raw.order_id || raw.code || Date.now()}`,
@@ -75,11 +93,18 @@ export class OrderWebhookController {
       paymentMethod: String(paymentMethodCode).toLowerCase(),
 
       items,
-      subtotal: parseFloat(raw.sub_total || raw.subtotal || 0),
-      shippingFee: parseFloat(raw.shipping_cost || raw.shipping_fee || raw.shipping?.cost || 0),
+      subtotal: parseFloat(zidSubtotalItem?.value || raw.sub_total || raw.subtotal || raw.products_sum_total || 0),
+      shippingFee: parseFloat(
+        zidShippingItem?.value ||
+        raw.shipping_cost ||
+        raw.shipping_fee ||
+        raw.shipping?.cost ||
+        raw.shipping_cost_string ||
+        0
+      ),
       discountAmount: parseFloat(raw.discount || raw.discount_amount || raw.total_discount || 0),
-      taxAmount: parseFloat(raw.tax_amount || raw.tax || 0),
-      totalAmount: parseFloat(raw.total || raw.total_amount || raw.order_total || 0),
+      taxAmount: parseFloat(zidVatItem?.value || raw.tax_amount || raw.tax || 0),
+      totalAmount: parseFloat(zidTotalItem?.value || raw.total || raw.total_amount || raw.order_total || 0),
       orderDate: raw.created_at || raw.order_date || raw.date || new Date().toISOString(),
       rawOrderData: req.body,
     };
