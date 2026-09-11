@@ -338,20 +338,7 @@ export class OrderService {
       account_id: revenueAccountId,
     }));
 
-    // إضافة سطر الشحن (إن وُجد)
-    if (order.shippingFee > 0) {
-      invoiceItems.push({
-        item: 'رسوم الشحن والتوصيل',
-        description: 'رسوم الشحن والتوصيل',
-        unit_price: order.shippingFee,
-        quantity: 1,
-        discount: 0,
-        tax1: order.taxAmount === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15InclusiveTaxId,
-        account_id: env.daftra.shippingRevenueAccountId,
-      } as any);
-    }
-
-    // بناء الـ Payload الموحد
+    // بناء الـ Payload الموحد (استخدام حقول الشحن الأصلية لدفترة بدلاً من إدراجه كمنتج في الجدول)
     const invoicePayload: DaftraInvoicePayload = {
       Invoice: {
         client_id: clientId,
@@ -364,6 +351,13 @@ export class OrderService {
           order.orderDate && !isNaN(order.orderDate.getTime())
             ? order.orderDate.toISOString().split('T')[0]
             : new Date().toISOString().split('T')[0],
+        ...(order.shippingFee > 0
+          ? {
+              shipping_options: '1',
+              shipping_amount: Number(order.shippingFee),
+              shipping_tax_id: order.taxAmount === 0 ? 0 : env.daftra.vat15InclusiveTaxId,
+            }
+          : {}),
         ...(order.discountAmount > 0
           ? {
               discount: order.discountAmount,

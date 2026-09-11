@@ -86,6 +86,10 @@ export interface DaftraInvoicePayload {
     date?: string;
     discount?: number;
     discount_type?: number;
+    shipping_options?: string;
+    shipping_amount?: number;
+    shipping_tax_id?: number;
+    shipping_option_id?: number | null;
   };
   InvoiceItem: Array<{
     product_id?: number;
