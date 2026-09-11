@@ -57,6 +57,9 @@ export class OrderWebhookController {
     const zidShippingItem = Array.isArray(raw.payment?.invoice)
       ? raw.payment.invoice.find((entry: any) => entry.code === 'shipping')
       : null;
+    const zidCodItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'zid_cod' || entry.code === 'cod')
+      : null;
     const zidVatItem = Array.isArray(raw.payment?.invoice)
       ? raw.payment.invoice.find((entry: any) => entry.code === 'vat')
       : null;
@@ -94,14 +97,15 @@ export class OrderWebhookController {
 
       items,
       subtotal: parseFloat(zidSubtotalItem?.value || raw.sub_total || raw.subtotal || raw.products_sum_total || 0),
-      shippingFee: parseFloat(
-        zidShippingItem?.value ||
-        raw.shipping_cost ||
-        raw.shipping_fee ||
-        raw.shipping?.cost ||
-        raw.shipping_cost_string ||
-        0
-      ),
+      shippingFee:
+        parseFloat(
+          zidShippingItem?.value ||
+          raw.shipping_cost ||
+          raw.shipping_fee ||
+          raw.shipping?.cost ||
+          raw.shipping_cost_string ||
+          0
+        ) + parseFloat(zidCodItem?.value || raw.cod_cost || raw.cod_fee || 0),
       discountAmount: parseFloat(raw.discount || raw.discount_amount || raw.total_discount || 0),
       taxAmount: parseFloat(zidVatItem?.value || raw.tax_amount || raw.tax || 0),
       totalAmount: parseFloat(zidTotalItem?.value || raw.total || raw.total_amount || raw.order_total || 0),

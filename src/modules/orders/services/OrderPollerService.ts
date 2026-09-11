@@ -164,6 +164,12 @@ export class OrderPollerService {
             detailedOrder.payment_method_name ||
             'unknown';
 
+          const detailedPaymentInvoice = Array.isArray(detailedOrder.payment?.invoice)
+            ? detailedOrder.payment.invoice
+            : [];
+          const zidShippingItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'shipping');
+          const zidCodItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'zid_cod' || entry.code === 'cod');
+
           const payload = {
             storeOrderId: `ZID-${detailedOrder.id || detailedOrder.order_id || detailedOrder.code}`,
             storeType: 'ZID' as const,
@@ -190,7 +196,14 @@ export class OrderPollerService {
             paymentMethod: String(paymentMethodCode).toLowerCase(),
             items,
             subtotal: parseFloat(detailedOrder.sub_total || detailedOrder.subtotal || 0),
-            shippingFee: parseFloat(detailedOrder.shipping_cost || detailedOrder.shipping_fee || detailedOrder.shipping?.cost || 0),
+            shippingFee:
+              parseFloat(
+                zidShippingItem?.value ||
+                detailedOrder.shipping_cost ||
+                detailedOrder.shipping_fee ||
+                detailedOrder.shipping?.cost ||
+                0
+              ) + parseFloat(zidCodItem?.value || detailedOrder.cod_cost || detailedOrder.cod_fee || 0),
             discountAmount: parseFloat(detailedOrder.discount || detailedOrder.discount_amount || detailedOrder.total_discount || 0),
             taxAmount: parseFloat(detailedOrder.tax_amount || detailedOrder.tax || 0),
             totalAmount: parseFloat(detailedOrder.total || detailedOrder.total_amount || detailedOrder.order_total || 0),
