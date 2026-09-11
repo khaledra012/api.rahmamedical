@@ -155,32 +155,38 @@ export class OrderService {
     sku: string,
     barcode?: string
   ): Promise<{ daftraProductId: number } | null> {
-    // 1️⃣ الخطوة الأولى (محلياً): البحث في جدول الربط الداخلي product_mappings (للمنتجات الجديدة)
+    // 1️⃣ الخطوة الأولى (محلياً): البحث في جدول الربط الداخلي product_mappings
     const mapping = await ProductMapping.findOne({ where: { sku, syncStatus: 'SYNCED' } });
     if (mapping) return { daftraProductId: mapping.daftraProductId };
 
-    // فحص محلي سريع في جدول المنتجات
-    const localProduct = await Product.findOne({ where: { sku } });
-    if (localProduct) return { daftraProductId: localProduct.daftraProductId };
-
-    if (barcode) {
-      const productByBarcode = await Product.findOne({ where: { barcode } });
-      if (productByBarcode) return { daftraProductId: productByBarcode.daftraProductId };
+    // 2️⃣ الخطوة الثانية (محلياً): البحث في بنود المبيعات السابقة المطابقة (دون تلويث جدول المنتجات والنشر)
+    const cachedOrderItem = await OrderItem.findOne({
+      where: { sku, matchStatus: 'MATCHED', daftraProductId: { [Op.ne]: null } },
+    });
+    if (cachedOrderItem && cachedOrderItem.daftraProductId) {
+      return { daftraProductId: cachedOrderItem.daftraProductId };
     }
 
-    // 2️⃣ الخطوة الثانية (أونلاين في دفترة): البحث في دفترة بالـ SKU للمنتجات القديمة
+    if (barcode) {
+      const cachedByBarcode = await OrderItem.findOne({
+        where: { barcode, matchStatus: 'MATCHED', daftraProductId: { [Op.ne]: null } },
+      });
+      if (cachedByBarcode && cachedByBarcode.daftraProductId) {
+        return { daftraProductId: cachedByBarcode.daftraProductId };
+      }
+    }
+
+    // 3️⃣ الخطوة الثالثة (أونلاين في دفترة): البحث في دفترة بالـ SKU للمنتجات القديمة
     logger.info(`[OrderService] Product "${sku}" not found locally. Querying Daftra online by SKU...`);
     const daftraProductBySku = await daftraClient.searchProductBySku(sku);
 
     if (daftraProductBySku && daftraProductBySku.id) {
       const daftraId = parseInt(String(daftraProductBySku.id), 10);
       logger.info(`[OrderService] Found legacy Daftra product online by SKU "${sku}" (ID: #${daftraId})`);
-
-      await this.cacheDaftraProductLocally(daftraProductBySku, sku, barcode);
       return { daftraProductId: daftraId };
     }
 
-    // 3️⃣ الخطوة الثالثة (أونلاين في دفترة): البحث في دفترة بالباركود Barcode
+    // 4️⃣ الخطوة الرابعة (أونلاين في دفترة): البحث في دفترة بالباركود Barcode
     if (barcode) {
       logger.info(`[OrderService] Querying Daftra online by Barcode "${barcode}"...`);
       const daftraProductByBarcode = await daftraClient.searchProductByBarcode(barcode);
@@ -188,8 +194,6 @@ export class OrderService {
       if (daftraProductByBarcode && daftraProductByBarcode.id) {
         const daftraId = parseInt(String(daftraProductByBarcode.id), 10);
         logger.info(`[OrderService] Found legacy Daftra product online by Barcode "${barcode}" (ID: #${daftraId})`);
-
-        await this.cacheDaftraProductLocally(daftraProductByBarcode, sku, barcode);
         return { daftraProductId: daftraId };
       }
     }
@@ -197,31 +201,6 @@ export class OrderService {
     // إذا لم يُعثر عليه محلياً ولا في دفترة أونلاين بالـ SKU ولا بالباركود:
     logger.warn(`[OrderService] Product "${sku}" (Barcode: ${barcode || 'N/A'}) NOT found in Daftra online or locally.`);
     return null;
-  }
-
-  /**
-   * حفظ صنف دفترة القديم محلياً عند العثور عليه أونلاين لتسريع المعاملات المستقبلية
-   */
-  private async cacheDaftraProductLocally(rawDaftraProduct: any, sku: string, barcode?: string): Promise<void> {
-    try {
-      const daftraProductId = parseInt(String(rawDaftraProduct.id), 10);
-      const existing = await Product.findOne({ where: { daftraProductId } });
-      if (!existing) {
-        await Product.create({
-          daftraProductId,
-          sku: rawDaftraProduct.product_code || sku,
-          barcode: rawDaftraProduct.barcode || barcode || null,
-          nameAr: rawDaftraProduct.name || `منتج #${daftraProductId}`,
-          price: parseFloat(rawDaftraProduct.unit_price) || 0,
-          stockQuantity: parseInt(rawDaftraProduct.stock_balance) || 0,
-          rawDaftraData: rawDaftraProduct,
-          publishStatus: 'PUBLISHED',
-          trendyolStatus: 'PUBLISHED',
-        });
-      }
-    } catch (err: any) {
-      logger.warn(`[OrderService] Non-critical: Could not cache Daftra product locally: ${err.message}`);
-    }
   }
 
   // ──────────────────────────────────────────────────────────────
