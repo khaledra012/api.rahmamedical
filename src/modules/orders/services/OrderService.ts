@@ -234,9 +234,12 @@ export class OrderService {
     shippingAddress?: string | null,
     storeType?: string,
     city?: string | null,
-    countryCode?: string | null
+    countryCode?: string | null,
+    streetAddress?: string | null
   ): Promise<number> {
     try {
+      const addressToSave = streetAddress || shippingAddress || undefined;
+
       // 1. البحث برقم الهاتف
       if (customerPhone) {
         const clientByPhone = await daftraClient.searchClientByPhone(customerPhone);
@@ -245,9 +248,11 @@ export class OrderService {
           daftraClient
             .updateClient(cId, {
               business_name: (customerName || '').trim() || undefined,
+              first_name: '',
+              last_name: '',
               city: city || undefined,
               country_code: countryCode || 'SA',
-              address1: shippingAddress || undefined,
+              address1: addressToSave,
             })
             .catch(() => {});
           return cId;
@@ -262,9 +267,11 @@ export class OrderService {
           daftraClient
             .updateClient(cId, {
               business_name: (customerName || '').trim() || undefined,
+              first_name: '',
+              last_name: '',
               city: city || undefined,
               country_code: countryCode || 'SA',
-              address1: shippingAddress || undefined,
+              address1: addressToSave,
             })
             .catch(() => {});
           return cId;
@@ -274,17 +281,13 @@ export class OrderService {
       // 3. إنشاء عميل جديد في دفترة باسمه الحقيقي
       const name = (customerName || '').trim();
       if (name) {
-        const nameParts = name.split(/\s+/);
-        const firstName = nameParts[0] || name;
-        const lastName = nameParts.slice(1).join(' ') || '';
-
         const created = await daftraClient.createClient({
           business_name: name,
-          first_name: firstName,
-          last_name: lastName,
+          first_name: '',
+          last_name: '',
           email: customerEmail || `customer_${Date.now()}@rahmamedical.online`,
           phone1: customerPhone || undefined,
-          address1: shippingAddress || undefined,
+          address1: addressToSave,
           city: city || undefined,
           country_code: countryCode || 'SA',
         });
@@ -322,7 +325,8 @@ export class OrderService {
       order.shippingAddress || addressInfo.fullAddress,
       order.storeType,
       addressInfo.city,
-      addressInfo.countryCode
+      addressInfo.countryCode,
+      addressInfo.streetAddress
     );
 
     // بناء ملاحظات الفاتورة (Customer details in notes)
@@ -354,7 +358,7 @@ export class OrderService {
       Invoice: {
         client_id: clientId,
         client_email: order.customerEmail || 'orders@rahmamedical.online',
-        client_address1: addressInfo.street || addressInfo.fullAddress || undefined,
+        client_address1: addressInfo.streetAddress || undefined,
         client_city: addressInfo.city || undefined,
         client_country_code: addressInfo.countryCode || 'SA',
         storehouse_id: env.daftra.storehouseId,

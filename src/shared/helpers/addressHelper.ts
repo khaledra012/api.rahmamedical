@@ -4,6 +4,7 @@ export interface ExtractedAddress {
   city: string;
   district: string;
   street: string;
+  streetAddress: string;
   fullAddress: string;
 }
 
@@ -34,6 +35,10 @@ export function extractAddressDetails(shipping: any, shippingAddress: any): Extr
   const district = (addr.district || shipping?.district || '').trim();
   const street = (addr.street || addr.formatted_address || shipping?.street || '').trim();
 
+  // عنوان الشارع والحي فقط (بدون تكرار الدولة والمدينة لأن دفترة يعرضهما في حقول منفصلة)
+  const streetParts = [district, street].filter(Boolean);
+  const streetAddress = streetParts.join(' - ') || street || district || '';
+
   const parts = [countryName, city, district, street].filter(Boolean);
   const fullAddress = parts.join(' - ');
 
@@ -43,6 +48,7 @@ export function extractAddressDetails(shipping: any, shippingAddress: any): Extr
     city,
     district,
     street,
+    streetAddress,
     fullAddress: fullAddress || 'السعودية',
   };
 }
