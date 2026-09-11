@@ -1,7 +1,7 @@
 import { orderService } from './OrderService';
 import { env } from '../../../config/env';
 import { zidClient } from '../../../shared/integrations/ZidClient';
-import { logger } from '../../../shared/helpers/logger';
+import { logger, extractAddressDetails } from '../../../shared/helpers';
 import { SyncLog } from '../../products/models/SyncLog';
 import { SystemSetting } from '../../../shared/models/SystemSetting';
 
@@ -170,6 +170,8 @@ export class OrderPollerService {
           const zidShippingItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'shipping');
           const zidCodItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'zid_cod' || entry.code === 'cod');
 
+          const addressInfo = extractAddressDetails(detailedOrder.shipping, detailedOrder.shipping_address);
+
           const payload = {
             storeOrderId: `ZID-${detailedOrder.id || detailedOrder.order_id || detailedOrder.code}`,
             storeType: 'ZID' as const,
@@ -186,13 +188,7 @@ export class OrderPollerService {
               detailedOrder.shipping_address?.phone ||
               '',
             customerEmail: detailedOrder.customer?.email || null,
-            shippingAddress: [
-              detailedOrder.shipping?.street || detailedOrder.shipping_address?.street,
-              detailedOrder.shipping?.city || detailedOrder.shipping_address?.city,
-              detailedOrder.shipping?.district || detailedOrder.shipping_address?.district,
-            ]
-              .filter(Boolean)
-              .join(', ') || null,
+            shippingAddress: addressInfo.fullAddress,
             paymentMethod: String(paymentMethodCode).toLowerCase(),
             items,
             subtotal: parseFloat(detailedOrder.sub_total || detailedOrder.subtotal || 0),

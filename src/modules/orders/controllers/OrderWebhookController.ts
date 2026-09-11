@@ -3,7 +3,7 @@ import { orderService } from '../services/OrderService';
 import { env } from '../../../config/env';
 import { asyncHandler } from '../../../shared/middlewares/asyncHandler';
 import { IncomingOrderPayload } from '../dtos/order.dtos';
-import { logger } from '../../../shared/helpers/logger';
+import { logger, extractAddressDetails } from '../../../shared/helpers';
 
 export class OrderWebhookController {
   /**
@@ -70,6 +70,8 @@ export class OrderWebhookController {
       ? raw.payment.invoice.find((entry: any) => entry.code === 'total')
       : null;
 
+    const addressInfo = extractAddressDetails(raw.shipping, raw.shipping_address);
+
     const payload: IncomingOrderPayload = {
       storeOrderId: `ZID-${raw.id || raw.order_id || raw.code || Date.now()}`,
       storeType: 'ZID',
@@ -86,13 +88,7 @@ export class OrderWebhookController {
         raw.shipping_address?.phone ||
         '',
       customerEmail: raw.customer?.email || null,
-      shippingAddress: [
-        raw.shipping?.street || raw.shipping_address?.street,
-        raw.shipping?.city || raw.shipping_address?.city,
-        raw.shipping?.district || raw.shipping_address?.district,
-      ]
-        .filter(Boolean)
-        .join(', ') || null,
+      shippingAddress: addressInfo.fullAddress,
       paymentMethod: String(paymentMethodCode).toLowerCase(),
 
       items,

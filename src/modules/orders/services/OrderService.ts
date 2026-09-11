@@ -8,7 +8,7 @@ import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
 import { zidClient } from '../../../shared/integrations/ZidClient';
 import { env } from '../../../config/env';
-import { logger } from '../../../shared/helpers/logger';
+import { logger, extractAddressDetails } from '../../../shared/helpers';
 
 import { NotFoundError, ConflictError } from '../../../shared/errors';
 import {
@@ -232,19 +232,43 @@ export class OrderService {
     customerPhone?: string | null,
     customerEmail?: string | null,
     shippingAddress?: string | null,
-    storeType?: string
+    storeType?: string,
+    city?: string | null,
+    countryCode?: string | null
   ): Promise<number> {
     try {
       // 1. البحث برقم الهاتف
       if (customerPhone) {
         const clientByPhone = await daftraClient.searchClientByPhone(customerPhone);
-        if (clientByPhone?.id) return parseInt(String(clientByPhone.id), 10);
+        if (clientByPhone?.id) {
+          const cId = parseInt(String(clientByPhone.id), 10);
+          daftraClient
+            .updateClient(cId, {
+              business_name: (customerName || '').trim() || undefined,
+              city: city || undefined,
+              country_code: countryCode || 'SA',
+              address1: shippingAddress || undefined,
+            })
+            .catch(() => {});
+          return cId;
+        }
       }
 
       // 2. البحث بالبريد الإلكتروني (إن وجد وغير افتراضي)
       if (customerEmail && !customerEmail.includes('example.com') && !customerEmail.includes('orders@rahmamedical')) {
         const clientByEmail = await daftraClient.searchClientByEmail(customerEmail);
-        if (clientByEmail?.id) return parseInt(String(clientByEmail.id), 10);
+        if (clientByEmail?.id) {
+          const cId = parseInt(String(clientByEmail.id), 10);
+          daftraClient
+            .updateClient(cId, {
+              business_name: (customerName || '').trim() || undefined,
+              city: city || undefined,
+              country_code: countryCode || 'SA',
+              address1: shippingAddress || undefined,
+            })
+            .catch(() => {});
+          return cId;
+        }
       }
 
       // 3. إنشاء عميل جديد في دفترة باسمه الحقيقي
@@ -261,6 +285,8 @@ export class OrderService {
           email: customerEmail || `customer_${Date.now()}@rahmamedical.online`,
           phone1: customerPhone || undefined,
           address1: shippingAddress || undefined,
+          city: city || undefined,
+          country_code: countryCode || 'SA',
         });
 
         if (created?.id) return parseInt(String(created.id), 10);
@@ -280,17 +306,23 @@ export class OrderService {
     items: OrderItem[],
     paymentMapping: PaymentMapping
   ): Promise<{ invoiceId: number; invoiceNumber: string }> {
+    // استخراج بيانات العنوان والدولة والمدينة بالتفصيل
+    const rawData: any = order.rawOrderData || {};
+    const addressInfo = extractAddressDetails(rawData.shipping, rawData.shipping_address);
+
     // تحديد حساب الإيراد حسب قناة البيع (Channel Revenue Separation)
     const revenueAccountId =
       order.storeType === 'ZID' ? env.daftra.zidRevenueAccountId : env.daftra.trendyolRevenueAccountId;
 
-    // تحديد معرف العميل باسمه الحقيقي في دفترة
+    // تحديد معرف العميل باسمه الحقيقي في دفترة مع حفظ بيانات العنوان
     const clientId = await this.resolveOrCreateClient(
       order.customerName,
       order.customerPhone,
       order.customerEmail,
-      order.shippingAddress,
-      order.storeType
+      order.shippingAddress || addressInfo.fullAddress,
+      order.storeType,
+      addressInfo.city,
+      addressInfo.countryCode
     );
 
     // بناء ملاحظات الفاتورة (Customer details in notes)
@@ -322,6 +354,9 @@ export class OrderService {
       Invoice: {
         client_id: clientId,
         client_email: order.customerEmail || 'orders@rahmamedical.online',
+        client_address1: addressInfo.street || addressInfo.fullAddress || undefined,
+        client_city: addressInfo.city || undefined,
+        client_country_code: addressInfo.countryCode || 'SA',
         storehouse_id: env.daftra.storehouseId,
         draft: 1,
         is_draft: 1, // مسودة صامتة — لا خصم ولا قيود حتى الاعتماد

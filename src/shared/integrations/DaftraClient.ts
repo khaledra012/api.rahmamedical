@@ -230,11 +230,35 @@ export class DaftraClient {
     email?: string;
     phone1?: string;
     address1?: string;
+    city?: string;
+    country_code?: string;
   }): Promise<any> {
     return this.request({
       method: 'POST',
       url: `/clients.json`,
       data: { Client: clientData },
+    });
+  }
+
+  /**
+   * Update client in Daftra
+   */
+  public async updateClient(clientId: number | string, clientData: any): Promise<any> {
+    return this.request({
+      method: 'PUT',
+      url: `/clients/${clientId}.json`,
+      data: { Client: clientData },
+    });
+  }
+
+  /**
+   * Update draft/regular invoice in Daftra
+   */
+  public async updateInvoice(invoiceId: number | string, payload: any): Promise<any> {
+    return this.request({
+      method: 'PUT',
+      url: `/invoices/${invoiceId}.json`,
+      data: payload,
     });
   }
 

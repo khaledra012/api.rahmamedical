@@ -79,6 +79,9 @@ export interface DaftraInvoicePayload {
   Invoice: {
     client_id: number;
     client_email?: string;
+    client_address1?: string;
+    client_city?: string;
+    client_country_code?: string;
     storehouse_id: number;
     draft?: number;
     is_draft: number;
