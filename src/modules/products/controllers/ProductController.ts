@@ -141,7 +141,8 @@ export class ProductController {
    */
   public syncFromDaftra = async (req: Request, res: Response): Promise<Response> => {
     const forceFull = req.query.full === 'true' || req.body?.fullSync === true;
-    const result = await productPollerService.pollProductsNow(forceFull);
+    const lookbackMinutes = req.query.lookback ? parseInt(String(req.query.lookback)) : 120;
+    const result = await productPollerService.pollProductsNow(forceFull, lookbackMinutes);
     return sendSuccess(
       res,
       result,

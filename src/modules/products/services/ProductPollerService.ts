@@ -41,7 +41,10 @@ export class ProductPollerService {
   /**
    * جلب المنتجات المحدثة في آخر 5 دقائق من دفترة ومعالجتها آلياً
    */
-  public async pollProductsNow(forceFromBaseline: boolean = false): Promise<{ processedCount: number; errorsCount: number }> {
+  public async pollProductsNow(
+    forceFromBaseline: boolean = false,
+    customLookbackMinutes?: number
+  ): Promise<{ processedCount: number; errorsCount: number }> {
     if (this.isPolling) {
       logger.warn('[ProductPoller] Product poll already in progress. Skipping concurrent run.');
       return { processedCount: 0, errorsCount: 0 };
@@ -62,9 +65,17 @@ export class ProductPollerService {
       const lastPolledStr = forceFromBaseline ? null : await SystemSetting.getValue('products_last_polled_at');
       const lastPolledDate = lastPolledStr ? new Date(lastPolledStr) : baselineDate;
 
-      // 3. نافذة الفحص: آخر فحص مع 5 دقائق أمان إضافية للتغلب على فروق التوقيت وتحديثات الأصناف
-      const calculatedStart = new Date(lastPolledDate.getTime() - 5 * 60 * 1000);
-      const windowStart = calculatedStart < baselineDate ? baselineDate : calculatedStart;
+      // 3. نافذة الفحص: إما فترة فحص مخصصة (مثلاً ساعتين للزر اليدوي) أو آخر فحص مع 5 دقائق أمان
+      let windowStart: Date;
+      if (forceFromBaseline) {
+        windowStart = baselineDate;
+      } else if (customLookbackMinutes && customLookbackMinutes > 0) {
+        const customStart = new Date(Date.now() - customLookbackMinutes * 60 * 1000);
+        windowStart = customStart < baselineDate ? baselineDate : customStart;
+      } else {
+        const calculatedStart = new Date(lastPolledDate.getTime() - 5 * 60 * 1000);
+        windowStart = calculatedStart < baselineDate ? baselineDate : calculatedStart;
+      }
 
       logger.info(
         `[ProductPoller] Checking Daftra for products updated since: ${windowStart.toLocaleTimeString()} (Baseline: ${baselineDate.toLocaleTimeString()})`

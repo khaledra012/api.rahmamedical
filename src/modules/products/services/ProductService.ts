@@ -510,7 +510,7 @@ export class ProductService {
       where,
       limit,
       offset,
-      order: [['createdAt', 'DESC']],
+      order: [['updatedAt', 'DESC']],
     });
 
     return {
