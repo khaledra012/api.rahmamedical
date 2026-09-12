@@ -237,6 +237,12 @@ export class OrderService {
     countryCode?: string | null,
     streetAddress?: string | null
   ): Promise<number> {
+    // 0. إذا كان خيار التجميع مفعلاً لمتجر زد (الخيار الأول المعتمد محاسبياً):
+    // يتم التوجيه مباشرة إلى الحساب الموحد (حساب عملاء زد b2c - معرف 3964) لتجنب تضخم شجرة الحسابات
+    if (storeType === 'ZID' && env.daftra.consolidateZidClients) {
+      return env.daftra.zidGuestClientId;
+    }
+
     try {
       const addressToSave = streetAddress || shippingAddress || undefined;
 
@@ -357,6 +363,10 @@ export class OrderService {
     const invoicePayload: DaftraInvoicePayload = {
       Invoice: {
         client_id: clientId,
+        client_business_name: (order.customerName || '').trim() || undefined,
+        client_first_name: '',
+        client_last_name: '',
+        client_phone1: order.customerPhone || undefined,
         client_email: order.customerEmail || 'orders@rahmamedical.online',
         client_address1: addressInfo.streetAddress || undefined,
         client_city: addressInfo.city || undefined,

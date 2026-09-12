@@ -78,6 +78,10 @@ export interface OrderStatsDTO {
 export interface DaftraInvoicePayload {
   Invoice: {
     client_id: number;
+    client_business_name?: string;
+    client_first_name?: string;
+    client_last_name?: string;
+    client_phone1?: string;
     client_email?: string;
     client_address1?: string;
     client_city?: string;
