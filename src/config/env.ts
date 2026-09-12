@@ -59,7 +59,7 @@ export const env = {
     // Operational IDs
     defaultClientId: parseInt(process.env.DAFTRA_DEFAULT_CLIENT_ID || '3', 10), // عميل عام
     zidGuestClientId: parseInt(process.env.DAFTRA_ZID_CLIENT_ID || '3964', 10), // حساب عملاء زد b2c (ID: 3964, Code: 12044946)
-    consolidateZidClients: process.env.CONSOLIDATE_ZID_CLIENTS !== 'false', // تجميع فواتير زد تحت الحساب الموحد
+    consolidateZidClients: process.env.CONSOLIDATE_ZID_CLIENTS === 'true', // افتراضياً معطل — الفواتير تصدر باسم العميل الحقيقي
     storehouseId: parseInt(process.env.DAFTRA_ONLINE_STOREHOUSE_ID || '3', 10), // مستودع المتجر الالكتروني
 
     // GL Accounts

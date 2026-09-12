@@ -232,6 +232,7 @@ export class DaftraClient {
     address1?: string;
     city?: string;
     country_code?: string;
+    category_id?: number;
   }): Promise<any> {
     return this.request({
       method: 'POST',

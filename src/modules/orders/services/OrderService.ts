@@ -296,6 +296,7 @@ export class OrderService {
           address1: addressToSave,
           city: city || undefined,
           country_code: countryCode || 'SA',
+          category_id: 39, // تصنيف: عميل اونلاين
         });
 
         if (created?.id) return parseInt(String(created.id), 10);
