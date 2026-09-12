@@ -360,13 +360,18 @@ export class OrderService {
       account_id: revenueAccountId,
     }));
 
+    // استخراج الاسم الأول والأخير للعميل لضمان ظهوره بشكل سليم في قوالب فواتير دفترة
+    const nameParts = (order.customerName || '').trim().split(/\s+/);
+    const firstName = nameParts[0] || 'عميل';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
     // بناء الـ Payload الموحد (استخدام حقول الشحن الأصلية لدفترة بدلاً من إدراجه كمنتج في الجدول)
     const invoicePayload: DaftraInvoicePayload = {
       Invoice: {
         client_id: clientId,
         client_business_name: (order.customerName || '').trim() || undefined,
-        client_first_name: '',
-        client_last_name: '',
+        client_first_name: firstName,
+        client_last_name: lastName,
         client_phone1: order.customerPhone || undefined,
         client_email: order.customerEmail || 'orders@rahmamedical.online',
         client_address1: addressInfo.streetAddress || undefined,
