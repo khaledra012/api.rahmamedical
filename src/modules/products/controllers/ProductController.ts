@@ -140,7 +140,8 @@ export class ProductController {
    * POST /api/products/sync-daftra
    */
   public syncFromDaftra = async (req: Request, res: Response): Promise<Response> => {
-    const result = await productPollerService.pollProductsNow(true);
+    const forceFull = req.query.full === 'true' || req.body?.fullSync === true;
+    const result = await productPollerService.pollProductsNow(forceFull);
     return sendSuccess(
       res,
       result,
