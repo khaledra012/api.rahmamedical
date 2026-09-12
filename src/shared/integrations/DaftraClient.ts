@@ -73,12 +73,21 @@ export class DaftraClient {
   /**
    * Get list of products from Daftra
    */
-  public async getProducts(page: number = 1, limit: number = 50, orderBy: string = 'updated'): Promise<any> {
-    return this.request({
-      method: 'GET',
-      url: `/products.json`,
-      params: { page, limit, [`order[${orderBy}]`]: 'desc' },
-    });
+  public async getProducts(page: number = 1, limit: number = 50, _orderBy: string = 'updated'): Promise<any> {
+    try {
+      // Use v2 entity API: returns valid JSON sorted by newest ID first
+      const res = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/product/list', {
+        params: { page, per_page: limit },
+      });
+      return res.data;
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] v2 product list failed, falling back to api2:`, err.message);
+      return this.request({
+        method: 'GET',
+        url: `/products.json`,
+        params: { page, limit },
+      });
+    }
   }
 
   /**

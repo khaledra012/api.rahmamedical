@@ -26,7 +26,12 @@ export class ProductService {
     const sku = payload.product_code || `SKU-${daftraProductId}`;
     const nameAr = payload.name || `منتج رقم ${daftraProductId}`;
     const price = parseFloat(payload.unit_price as any) || 0.0;
-    const costPrice = payload.cost !== undefined ? parseFloat(payload.cost as any) : null;
+    const costPrice =
+      payload.cost !== undefined && payload.cost !== null
+        ? parseFloat(payload.cost as any)
+        : payload.buy_price !== undefined && payload.buy_price !== null
+        ? parseFloat(payload.buy_price as any)
+        : null;
     const salePrice = payload.discount_price !== undefined ? parseFloat(payload.discount_price as any) : null;
     const stockQuantity = parseInt(payload.stock_balance as any) || 0;
     const daftraStorehouseId = payload.storehouse_id ? parseInt(payload.storehouse_id as any) : null;

@@ -19,6 +19,9 @@ router.get('/trendyol-brands', asyncHandler(productController.getTrendyolBrands)
 // Products list with filters
 router.get('/', productListQueryValidation, validateRequest, asyncHandler(productController.getProducts));
 
+// Sync products on-demand from Daftra
+router.post('/sync-daftra', asyncHandler(productController.syncFromDaftra));
+
 // Single product details
 router.get('/:id', productIdParamValidation, validateRequest, asyncHandler(productController.getProductById));
 

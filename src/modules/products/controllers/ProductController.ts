@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { productService } from '../services/ProductService';
+import { productPollerService } from '../services/ProductPollerService';
 import { zidClient } from '../../../shared/integrations/ZidClient';
 import { trendyolClient } from '../../../shared/integrations/TrendyolClient';
 import { sendSuccess } from '../../../shared/helpers/responseFormatter';
@@ -133,6 +134,19 @@ export class ProductController {
     } catch (error: any) {
       return sendSuccess(res, [], 'تعذر جلب الماركات الحية', 200);
     }
+  };
+
+  /**
+   * POST /api/products/sync-daftra
+   */
+  public syncFromDaftra = async (req: Request, res: Response): Promise<Response> => {
+    const result = await productPollerService.pollProductsNow(true);
+    return sendSuccess(
+      res,
+      result,
+      `تمت المزامنة مع دفترة بنجاح (تمت معالجة ${result.processedCount} منتج)`,
+      200
+    );
   };
 }
 

@@ -41,7 +41,7 @@ export class ProductPollerService {
   /**
    * جلب المنتجات المحدثة في آخر 5 دقائق من دفترة ومعالجتها آلياً
    */
-  public async pollProductsNow(): Promise<{ processedCount: number; errorsCount: number }> {
+  public async pollProductsNow(forceFromBaseline: boolean = false): Promise<{ processedCount: number; errorsCount: number }> {
     if (this.isPolling) {
       logger.warn('[ProductPoller] Product poll already in progress. Skipping concurrent run.');
       return { processedCount: 0, errorsCount: 0 };
@@ -59,7 +59,7 @@ export class ProductPollerService {
       const baselineDate = await SystemSetting.getOrCreateBaselineDate();
 
       // 2. استرجاع وقت آخر فحص ناجح محفوظ في قاعدة البيانات
-      const lastPolledStr = await SystemSetting.getValue('products_last_polled_at');
+      const lastPolledStr = forceFromBaseline ? null : await SystemSetting.getValue('products_last_polled_at');
       const lastPolledDate = lastPolledStr ? new Date(lastPolledStr) : baselineDate;
 
       // 3. نافذة الفحص: آخر فحص مع دقيقة أمان إضافية، بشرط ألا تسبق تاريخ تشغيل النظام أبداً
@@ -92,21 +92,30 @@ export class ProductPollerService {
           const productPayload = item.Product || item;
           if (productPayload && productPayload.id) {
             // أمان مضاعف: التوقف فوراً إذا كان تاريخ التعديل أقدم من نافذة الفحص أو تاريخ تشغيل النظام
-            const itemTimestamp =
+            const rawTimestamp =
+              productPayload.modified ||
               productPayload.updated ||
               productPayload.updated_at ||
               productPayload.created ||
               productPayload.created_at;
 
-            if (itemTimestamp) {
-              const itemDate = new Date(itemTimestamp);
-              if (!isNaN(itemDate.getTime()) && (itemDate < windowStart || itemDate < baselineDate)) {
-                reachedOlderProducts = true;
-                break;
+            let itemDate: Date | null = null;
+            if (rawTimestamp) {
+              const isoLike = String(rawTimestamp).includes('T')
+                ? String(rawTimestamp)
+                : String(rawTimestamp).replace(' ', 'T') + '+03:00';
+              const parsed = new Date(isoLike);
+              if (!isNaN(parsed.getTime())) {
+                itemDate = parsed;
               }
             }
 
-            candidateProducts.push({ payload: productPayload, timestamp: itemTimestamp });
+            if (itemDate && (itemDate < windowStart || itemDate < baselineDate)) {
+              reachedOlderProducts = true;
+              break;
+            }
+
+            candidateProducts.push({ payload: productPayload, timestamp: itemDate || rawTimestamp });
           }
         }
 
@@ -133,7 +142,7 @@ export class ProductPollerService {
           processedCount++;
 
           if (item.timestamp) {
-            const validDate = new Date(item.timestamp);
+            const validDate = item.timestamp instanceof Date ? item.timestamp : new Date(item.timestamp);
             if (!isNaN(validDate.getTime())) {
               lastSuccessfulEventTime = validDate;
             }
