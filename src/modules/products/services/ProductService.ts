@@ -458,7 +458,7 @@ export class ProductService {
       name: { ar: product.nameAr, en: product.nameEn || product.nameAr },
       price: Number(product.price),
       cost: product.costPrice ? Number(product.costPrice) : null,
-      stocks: [{ location_id: 'default-location', quantity: product.stockQuantity }],
+      quantity: product.stockQuantity,
     };
     await zidClient.updateProduct(zidProductId, payload);
   }
