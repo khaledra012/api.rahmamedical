@@ -221,6 +221,13 @@ export class OrderService {
       });
     }
 
+    if (!mapping && normalizedKey.startsWith('zid_')) {
+      const strippedKey = normalizedKey.replace(/^zid_/, '');
+      mapping = await PaymentMapping.findOne({
+        where: { paymentMethodKey: strippedKey, isActive: true },
+      });
+    }
+
     return mapping || null;
   }
 
