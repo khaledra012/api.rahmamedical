@@ -75,9 +75,9 @@ export class DaftraClient {
    */
   public async getProducts(page: number = 1, limit: number = 50, _orderBy: string = 'updated'): Promise<any> {
     try {
-      // Use v2 entity API: returns valid JSON sorted by newest ID first
+      // Use v2 entity API: returns valid JSON sorted by newest modified first
       const res = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/product/list', {
-        params: { page, per_page: limit },
+        params: { page, per_page: limit, 'order[modified]': 'desc' },
       });
       return res.data;
     } catch (err: any) {

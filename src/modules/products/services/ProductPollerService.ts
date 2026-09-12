@@ -62,8 +62,8 @@ export class ProductPollerService {
       const lastPolledStr = forceFromBaseline ? null : await SystemSetting.getValue('products_last_polled_at');
       const lastPolledDate = lastPolledStr ? new Date(lastPolledStr) : baselineDate;
 
-      // 3. نافذة الفحص: آخر فحص مع دقيقة أمان إضافية، بشرط ألا تسبق تاريخ تشغيل النظام أبداً
-      const calculatedStart = new Date(lastPolledDate.getTime() - 60 * 1000);
+      // 3. نافذة الفحص: آخر فحص مع 5 دقائق أمان إضافية للتغلب على فروق التوقيت وتحديثات الأصناف
+      const calculatedStart = new Date(lastPolledDate.getTime() - 5 * 60 * 1000);
       const windowStart = calculatedStart < baselineDate ? baselineDate : calculatedStart;
 
       logger.info(
@@ -101,12 +101,15 @@ export class ProductPollerService {
 
             let itemDate: Date | null = null;
             if (rawTimestamp) {
-              const isoLike = String(rawTimestamp).includes('T')
-                ? String(rawTimestamp)
-                : String(rawTimestamp).replace(' ', 'T') + '+03:00';
-              const parsed = new Date(isoLike);
-              if (!isNaN(parsed.getTime())) {
-                itemDate = parsed;
+              const str = String(rawTimestamp).trim();
+              if (str.includes('T') && (str.endsWith('Z') || str.includes('+') || str.includes('-'))) {
+                const d = new Date(str);
+                if (!isNaN(d.getTime())) itemDate = d;
+              } else {
+                // توقيت دفترة بتوقيت السعودية (+03:00) دائماً
+                const isoLike = str.replace(' ', 'T') + '+03:00';
+                const d = new Date(isoLike);
+                if (!isNaN(d.getTime())) itemDate = d;
               }
             }
 
@@ -115,7 +118,7 @@ export class ProductPollerService {
               break;
             }
 
-            candidateProducts.push({ payload: productPayload, timestamp: itemDate || rawTimestamp });
+            candidateProducts.push({ payload: productPayload, timestamp: itemDate || new Date() });
           }
         }
 
@@ -141,11 +144,8 @@ export class ProductPollerService {
           await productService.handleIncomingWebhook(item.payload);
           processedCount++;
 
-          if (item.timestamp) {
-            const validDate = item.timestamp instanceof Date ? item.timestamp : new Date(item.timestamp);
-            if (!isNaN(validDate.getTime())) {
-              lastSuccessfulEventTime = validDate;
-            }
+          if (item.timestamp instanceof Date && !isNaN(item.timestamp.getTime())) {
+            lastSuccessfulEventTime = item.timestamp;
           }
         } catch (itemErr: any) {
           hasItemFailure = true;
