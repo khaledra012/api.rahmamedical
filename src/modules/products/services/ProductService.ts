@@ -158,27 +158,31 @@ export class ProductService {
         },
         sku: product.sku,
         barcode: product.barcode || null,
-        price: Number(product.price),
+        price: Number(product.price) || 0,
         cost: product.costPrice ? Number(product.costPrice) : null,
         sale_price: product.salePrice ? Number(product.salePrice) : null,
-        weight: product.weight ? Number(product.weight) : null,
-        is_taxable: product.isTaxable,
+        weight: {
+          value: product.weight ? Number(product.weight) : 0.1,
+          unit: 'kg',
+        },
+        is_taxable: Boolean(product.isTaxable),
+        requires_shipping: true,
+        is_draft: false,
+        is_published: true,
+        quantity: product.stockQuantity || 0,
         description: {
           ar: product.descriptionAr || '',
           en: product.descriptionEn || '',
         },
-        categories: product.zidCategoryIds || [],
         images: (product.images || []).map((url) => ({ image: url })),
-        stocks: [
-          {
-            location_id: 'default-location',
-            quantity: product.stockQuantity,
-          },
-        ],
       };
 
       zidResponse = await zidClient.createProduct(payload);
-      const zidProductId = zidResponse?.product?.id || `ZID-${Date.now()}`;
+      const zidProductId = zidResponse?.id || zidResponse?.product?.id;
+
+      if (!zidProductId) {
+        throw new AppError('فشل الحصول على مُعرّف المنتج من منصة زد بعد الإرسال', 500);
+      }
 
       const [mapping] = await ProductMapping.findOrCreate({
         where: { productId: product.id },
@@ -209,7 +213,7 @@ export class ProductService {
         action: 'CREATE',
         direction: 'DAFTRA_TO_ZID',
         source: 'MANUAL',
-        requestUrl: 'https://api.zid.sa/v1/products',
+        requestUrl: 'https://api.zid.sa/v1/products/',
         requestMethod: 'POST',
         requestPayload: payload,
         responseStatus: 201,

@@ -13,8 +13,15 @@ export interface ZidProductPayload {
   price: number;
   cost?: number | null;
   sale_price?: number | null;
-  weight?: number | null;
+  weight?: {
+    value: number;
+    unit: string;
+  } | null;
   is_taxable?: boolean;
+  requires_shipping?: boolean;
+  is_draft?: boolean;
+  is_published?: boolean;
+  quantity?: number;
   description?: {
     ar?: string;
     en?: string;
@@ -39,6 +46,7 @@ export class ZidClient {
         Authorization: `Bearer ${authJwt}`,
         'X-Manager-Token': mgrToken,
         'Store-Id': storeId || env.zid.storeId,
+        Role: 'Manager',
         Accept: 'application/json',
       },
       timeout: 20000,
@@ -86,8 +94,8 @@ export class ZidClient {
   public async createProduct(payload: ZidProductPayload): Promise<any> {
     return this.request({
       method: 'POST',
-      url: '/products',
-      headers: { 'Content-Type': 'application/json' },
+      url: '/products/',
+      headers: { 'Content-Type': 'application/json', 'Accept-Language': 'ar' },
       data: payload,
     });
   }
@@ -98,8 +106,8 @@ export class ZidClient {
   public async updateProduct(zidProductId: string, payload: Partial<ZidProductPayload>): Promise<any> {
     return this.request({
       method: 'PATCH',
-      url: `/products/${zidProductId}`,
-      headers: { 'Content-Type': 'application/json' },
+      url: `/products/${zidProductId}/`,
+      headers: { 'Content-Type': 'application/json', 'Accept-Language': 'ar' },
       data: payload,
     });
   }
@@ -120,8 +128,8 @@ export class ZidClient {
   public async updateStock(zidProductId: string, quantity: number, locationId: string = 'default-location'): Promise<any> {
     return this.request({
       method: 'PATCH',
-      url: `/products/${zidProductId}`,
-      headers: { 'Content-Type': 'application/json' },
+      url: `/products/${zidProductId}/`,
+      headers: { 'Content-Type': 'application/json', 'Accept-Language': 'ar' },
       data: {
         stocks: [
           {
