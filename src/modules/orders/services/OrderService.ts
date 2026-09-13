@@ -385,8 +385,8 @@ export class OrderService {
         client_city: addressInfo.city || undefined,
         client_country_code: addressInfo.countryCode || 'SA',
         storehouse_id: env.daftra.storehouseId,
-        draft: 1,
-        is_draft: 1, // مسودة صامتة — لا خصم ولا قيود حتى الاعتماد
+        draft: 0,
+        is_draft: 0, // فاتورة معتمدة ومُصدرة مباشرة
         notes: invoiceNotes,
         date:
           order.orderDate && !isNaN(order.orderDate.getTime())
