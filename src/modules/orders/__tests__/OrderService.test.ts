@@ -437,7 +437,7 @@ describe('OrderService Unit Tests', () => {
         status: 'DRAFT_CREATED',
       });
 
-      await expect(service.retryOrder(1)).rejects.toThrow('المسودة مُصدرة بالفعل');
+      await expect(service.retryOrder(1)).rejects.toThrow('الفاتورة مُصدرة بالفعل');
     });
 
     it('should throw NotFoundError when order does not exist', async () => {

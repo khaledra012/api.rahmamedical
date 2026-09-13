@@ -130,7 +130,7 @@ export class OrderService {
       );
     } catch (error: any) {
       order.status = 'FAILED';
-      order.statusMessage = `فشل إنشاء المسودة في دفترة: ${error.message}`;
+      order.statusMessage = `فشل إنشاء الفاتورة في دفترة: ${error.message}`;
       await order.save();
 
       await SyncLog.create({
@@ -500,7 +500,7 @@ export class OrderService {
     if (!order) throw new NotFoundError('الطلب غير موجود');
 
     if (order.status === 'DRAFT_CREATED') {
-      throw new ConflictError('المسودة مُصدرة بالفعل في دفترة. لا حاجة لإعادة المحاولة.');
+      throw new ConflictError('الفاتورة مُصدرة بالفعل في دفترة. لا حاجة لإعادة المحاولة.');
     }
 
     if (order.status === 'PROCESSING') {
