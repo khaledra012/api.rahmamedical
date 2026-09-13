@@ -167,6 +167,32 @@ export class ZidClient {
       headers: { 'Accept-Language': 'ar' },
     });
   }
+
+  /**
+   * Search product in Zid by SKU (البحث عن منتج في متجر زد بكود الصنف)
+   */
+  public async getProductBySku(sku: string): Promise<any | null> {
+    if (!sku || !sku.trim()) return null;
+    try {
+      const trimmedSku = sku.trim();
+      const response: any = await this.request({
+        method: 'GET',
+        url: '/products/',
+        params: { sku: trimmedSku },
+      });
+      const results = response?.results || response?.data?.results || [];
+      if (Array.isArray(results) && results.length > 0) {
+        const exactMatch = results.find(
+          (p: any) => String(p.sku || '').trim().toLowerCase() === trimmedSku.toLowerCase()
+        );
+        return exactMatch || results[0];
+      }
+      return null;
+    } catch (error: any) {
+      logger.warn(`[ZidClient] Error searching product by SKU "${sku}": ${error.message}`);
+      return null;
+    }
+  }
 }
 
 export const zidClient = new ZidClient();

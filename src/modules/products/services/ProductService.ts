@@ -66,6 +66,11 @@ export class ProductService {
         this.syncUpdateToZid(product, mapping.zidProductId).catch((err) => {
           logger.error(`[ProductService] Auto-sync update to Zid failed for #${currentProductId}:`, err);
         });
+      } else if (mapping && !mapping.zidProductId && product.sku && !product.sku.startsWith('SKU-')) {
+        // فحص ذكي للأصناف المسجلة مسبقاً في الداشبورد وغير المربوطة
+        this.tryAutoLinkToZid(product, mapping).catch((err) => {
+          logger.error(`[ProductService] Auto-link to Zid failed for #${currentProductId}:`, err);
+        });
       }
       if (mapping && mapping.trendyolStatus === 'SYNCED') {
         this.syncUpdateToTrendyol(product).catch((err) => {
@@ -73,6 +78,22 @@ export class ProductService {
         });
       }
     } else {
+      // فحص ذكي استباقي في متجر زد بكود الصنف (Smart Auto-Link by SKU)
+      let autoLinkedZidId: string | null = null;
+      if (sku && !sku.startsWith('SKU-')) {
+        try {
+          const existingZidProduct = await zidClient.getProductBySku(sku);
+          if (existingZidProduct && existingZidProduct.id) {
+            autoLinkedZidId = String(existingZidProduct.id);
+            logger.info(
+              `[ProductService] Smart Auto-Link: Found matching product in Zid for SKU "${sku}" (Zid ID: ${autoLinkedZidId})`
+            );
+          }
+        } catch (searchErr: any) {
+          logger.warn(`[ProductService] Could not search Zid for SKU "${sku}": ${searchErr.message}`);
+        }
+      }
+
       product = await Product.create({
         daftraProductId,
         sku,
@@ -88,7 +109,7 @@ export class ProductService {
         isTaxable,
         taxPercentage,
         daftraCategory: payload.category_name || null,
-        publishStatus: 'PENDING_REVIEW',
+        publishStatus: autoLinkedZidId ? 'PUBLISHED' : 'PENDING_REVIEW',
         trendyolStatus: 'PENDING_REVIEW',
         rawDaftraData: payload,
       });
@@ -96,13 +117,39 @@ export class ProductService {
       await ProductMapping.create({
         productId: product.id,
         daftraProductId,
+        zidProductId: autoLinkedZidId,
         sku,
         barcode: payload.barcode || null,
-        syncStatus: 'PENDING',
+        syncStatus: autoLinkedZidId ? 'SYNCED' : 'PENDING',
         trendyolStatus: 'PENDING',
+        lastSyncedAt: autoLinkedZidId ? new Date() : null,
       });
 
-      logger.info(`[ProductService] Ingested new Daftra product #${daftraProductId} (${sku})`);
+      if (autoLinkedZidId) {
+        // تحديث الرصيد والسعر على متجر زد فوراً
+        const targetZidId = autoLinkedZidId;
+        const currentProductId = product.id;
+        this.syncUpdateToZid(product, targetZidId).catch((err) => {
+          logger.error(`[ProductService] Immediate sync to Zid failed for auto-linked #${currentProductId}:`, err);
+        });
+
+        await SyncLog.create({
+          entityType: 'PRODUCT',
+          entityId: currentProductId,
+          action: 'UPDATE',
+          direction: 'DAFTRA_TO_ZID',
+          source: 'POLLER',
+          requestUrl: `https://api.zid.sa/v1/products/${targetZidId}`,
+          requestMethod: 'PATCH',
+          status: 'SUCCESS',
+        });
+
+        logger.info(
+          `[ProductService] Smart Auto-Link SUCCESS: Ingested & linked Daftra product #${daftraProductId} (${sku}) -> Zid ${targetZidId} [PUBLISHED]`
+        );
+      } else {
+        logger.info(`[ProductService] Ingested new Daftra product #${daftraProductId} (${sku}) [PENDING_REVIEW]`);
+      }
     }
 
     return product;
@@ -474,6 +521,131 @@ export class ProductService {
         listPrice: Number(product.price),
       },
     ]);
+  }
+
+  /**
+   * محاولة ربط صنف مسجل مسبقاً في الداشبورد تلقائياً بمتجر زد إذا وُجد له كود مطابق
+   */
+  public async tryAutoLinkToZid(product: Product, mapping: ProductMapping): Promise<boolean> {
+    if (!product.sku || product.sku.startsWith('SKU-')) return false;
+
+    try {
+      const existingZidProduct = await zidClient.getProductBySku(product.sku);
+      if (existingZidProduct && existingZidProduct.id) {
+        const zidProductId = String(existingZidProduct.id);
+        mapping.zidProductId = zidProductId;
+        mapping.syncStatus = 'SYNCED';
+        mapping.lastSyncedAt = new Date();
+        mapping.lastError = null;
+        await mapping.save();
+
+        product.publishStatus = 'PUBLISHED';
+        product.publishError = null;
+        await product.save();
+
+        await this.syncUpdateToZid(product, zidProductId);
+
+        await SyncLog.create({
+          entityType: 'PRODUCT',
+          entityId: product.id,
+          action: 'UPDATE',
+          direction: 'DAFTRA_TO_ZID',
+          source: 'POLLER',
+          requestUrl: `https://api.zid.sa/v1/products/${zidProductId}`,
+          requestMethod: 'PATCH',
+          status: 'SUCCESS',
+        });
+
+        logger.info(
+          `[ProductService] Smart Auto-Link: Successfully linked product #${product.id} (${product.sku}) to Zid ID ${zidProductId}`
+        );
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      logger.warn(
+        `[ProductService] Auto-link attempt failed for product #${product.id} (${product.sku}): ${err.message}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * فحص شامل ومطابقة استباقية لجميع الأصناف المعلقة في الداشبورد ومطابقتها آلياً بكود الصنف (SKU) في متجر زد
+   */
+  public async autoLinkPendingProducts(): Promise<{
+    totalChecked: number;
+    linkedCount: number;
+    notInZidCount: number;
+    results: Array<{ productId: number; sku: string; zidProductId?: string; status: 'LINKED' | 'NOT_FOUND' | 'ERROR' }>;
+  }> {
+    const pendingProducts = await Product.findAll({
+      where: {
+        publishStatus: { [Op.in]: ['PENDING_REVIEW', 'FAILED'] },
+      },
+    });
+
+    let linkedCount = 0;
+    let notInZidCount = 0;
+    const results: Array<{ productId: number; sku: string; zidProductId?: string; status: 'LINKED' | 'NOT_FOUND' | 'ERROR' }> = [];
+
+    for (const prod of pendingProducts) {
+      if (!prod.sku || prod.sku.startsWith('SKU-')) {
+        results.push({ productId: prod.id, sku: prod.sku, status: 'NOT_FOUND' });
+        notInZidCount++;
+        continue;
+      }
+
+      let mapping = await ProductMapping.findOne({ where: { productId: prod.id } });
+      if (!mapping) {
+        mapping = await ProductMapping.create({
+          productId: prod.id,
+          daftraProductId: prod.daftraProductId,
+          sku: prod.sku,
+          syncStatus: 'PENDING',
+          trendyolStatus: 'PENDING',
+        });
+      }
+
+      if (mapping.zidProductId) {
+        prod.publishStatus = 'PUBLISHED';
+        await prod.save();
+        continue;
+      }
+
+      try {
+        const existingZidProduct = await zidClient.getProductBySku(prod.sku);
+        if (existingZidProduct && existingZidProduct.id) {
+          const zidProductId = String(existingZidProduct.id);
+          mapping.zidProductId = zidProductId;
+          mapping.syncStatus = 'SYNCED';
+          mapping.lastSyncedAt = new Date();
+          mapping.lastError = null;
+          await mapping.save();
+
+          prod.publishStatus = 'PUBLISHED';
+          prod.publishError = null;
+          await prod.save();
+
+          await this.syncUpdateToZid(prod, zidProductId);
+
+          linkedCount++;
+          results.push({ productId: prod.id, sku: prod.sku, zidProductId, status: 'LINKED' });
+        } else {
+          notInZidCount++;
+          results.push({ productId: prod.id, sku: prod.sku, status: 'NOT_FOUND' });
+        }
+      } catch (err: any) {
+        results.push({ productId: prod.id, sku: prod.sku, status: 'ERROR' });
+      }
+    }
+
+    return {
+      totalChecked: pendingProducts.length,
+      linkedCount,
+      notInZidCount,
+      results,
+    };
   }
 
   /**

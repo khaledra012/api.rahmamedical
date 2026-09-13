@@ -22,6 +22,9 @@ router.get('/', productListQueryValidation, validateRequest, asyncHandler(produc
 // Sync products on-demand from Daftra
 router.post('/sync-daftra', asyncHandler(productController.syncFromDaftra));
 
+// Smart auto-link pending products with Zid by SKU
+router.post('/auto-link', asyncHandler(productController.autoLinkPending));
+
 // Single product details
 router.get('/:id', productIdParamValidation, validateRequest, asyncHandler(productController.getProductById));
 

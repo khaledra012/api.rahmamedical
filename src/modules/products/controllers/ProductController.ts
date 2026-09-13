@@ -150,6 +150,19 @@ export class ProductController {
       200
     );
   };
+
+  /**
+   * POST /api/products/auto-link
+   */
+  public autoLinkPending = async (req: Request, res: Response): Promise<Response> => {
+    const result = await productService.autoLinkPendingProducts();
+    return sendSuccess(
+      res,
+      result,
+      `تم فحص ${result.totalChecked} منتج، تم ربط ${result.linkedCount} منتج بنجاح بمتجر زد`,
+      200
+    );
+  };
 }
 
 export const productController = new ProductController();

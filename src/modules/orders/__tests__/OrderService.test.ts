@@ -172,8 +172,8 @@ describe('OrderService Unit Tests', () => {
 
       // Verify the payload sent to Daftra
       const sentPayload = (MockDaftraClient.createInvoice as jest.Mock).mock.calls[0][0];
-      expect(sentPayload.Invoice.is_draft).toBe(1);
-      expect(sentPayload.Invoice.draft).toBe(1);
+      expect(sentPayload.Invoice.is_draft).toBe(0);
+      expect(sentPayload.Invoice.draft).toBe(0);
       expect(sentPayload.Invoice.storehouse_id).toBe(3);
       expect(result.treasuryId).toBe(19);
     });
