@@ -199,6 +199,25 @@ export class DaftraClient {
   }
 
   /**
+   * Add a payment (سند قبض مالي) to an invoice in Daftra
+   */
+  public async addInvoicePayment(payload: {
+    invoice_id: number;
+    amount: number;
+    treasury_id: number;
+    payment_method?: string;
+    date?: string;
+    transaction_id?: string;
+    notes?: string;
+  }): Promise<any> {
+    return this.request({
+      method: 'POST',
+      url: `/invoice_payments.json`,
+      data: { InvoicePayment: payload },
+    });
+  }
+
+  /**
    * Get list of clients from Daftra
    */
   public async getClients(page: number = 1, limit: number = 50): Promise<any> {

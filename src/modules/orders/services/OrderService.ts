@@ -100,14 +100,17 @@ export class OrderService {
       return order;
     }
 
-    // تجهيز وإرسال مسودة الفاتورة لدفترة
+    // تجهيز وإرسال الفاتورة لدفترة (معتمدة ومباشرة)
     try {
       const invoiceResult = await this.createDraftInvoice(order, orderItems, paymentMapping);
+      const paymentRecorded = await this.recordInvoicePayment(invoiceResult.invoiceId, order, paymentMapping);
 
       order.status = 'DRAFT_CREATED';
       order.daftraDraftInvoiceId = invoiceResult.invoiceId;
       order.daftraInvoiceNumber = invoiceResult.invoiceNumber;
-      order.statusMessage = `مسودة الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها بنجاح في دفترة.`;
+      order.statusMessage = paymentRecorded
+        ? `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة ومسددة في خزينة (${paymentMapping.treasuryName || paymentMapping.paymentMethodLabel}) بنجاح.`
+        : `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة في دفترة (غير مسددة).`;
       await order.save();
 
       // توثيق العملية في سجل المعاملات
@@ -123,7 +126,7 @@ export class OrderService {
       });
 
       logger.info(
-        `[OrderService] Draft invoice ${invoiceResult.invoiceNumber} created for order ${order.storeOrderId}`
+        `[OrderService] Invoice ${invoiceResult.invoiceNumber} created for order ${order.storeOrderId} (Payment recorded: ${paymentRecorded})`
       );
     } catch (error: any) {
       order.status = 'FAILED';
@@ -429,6 +432,66 @@ export class OrderService {
     };
   }
 
+  /**
+   * تسجيل سند سداد مالي للفاتورة في الخزينة المناسبة بدفترة
+   */
+  private async recordInvoicePayment(
+    invoiceId: number,
+    order: Order,
+    paymentMapping: PaymentMapping
+  ): Promise<boolean> {
+    const isCod = ['cod', 'cash_on_delivery', 'zid_cod'].includes(
+      (paymentMapping.paymentMethodKey || '').toLowerCase().trim()
+    );
+
+    if (isCod) {
+      logger.info(`[OrderService] Order #${order.storeOrderId} is COD. Skipping automated payment record.`);
+      return false;
+    }
+
+    if (!paymentMapping.treasuryId) {
+      logger.warn(
+        `[OrderService] No treasury ID mapped for payment method "${paymentMapping.paymentMethodKey}". Skipping payment.`
+      );
+      return false;
+    }
+
+    const paymentAmount = Number(order.totalAmount);
+    if (!paymentAmount || paymentAmount <= 0) {
+      logger.warn(
+        `[OrderService] Order #${order.storeOrderId} has invalid or zero totalAmount (${order.totalAmount}). Skipping automated payment.`
+      );
+      return false;
+    }
+
+    try {
+      const paymentDate =
+        order.orderDate && !isNaN(order.orderDate.getTime())
+          ? order.orderDate.toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+
+      await daftraClient.addInvoicePayment({
+        invoice_id: invoiceId,
+        amount: paymentAmount,
+        treasury_id: paymentMapping.treasuryId,
+        payment_method: paymentMapping.paymentMethodLabel,
+        date: paymentDate,
+        transaction_id: String(order.storeOrderId),
+        notes: `سداد طلب ${order.storeType} #${order.storeOrderId} عبر ${paymentMapping.paymentMethodLabel}`,
+      });
+
+      logger.info(
+        `[OrderService] Payment recorded for invoice #${invoiceId} in treasury #${paymentMapping.treasuryId} (${paymentMapping.treasuryName || paymentMapping.paymentMethodLabel})`
+      );
+      return true;
+    } catch (paymentErr: any) {
+      logger.error(
+        `[OrderService] Could not record automated payment for invoice #${invoiceId}: ${paymentErr.message}`
+      );
+      return false;
+    }
+  }
+
   // ──────────────────────────────────────────────────────────────
   // 5. إعادة المحاولة الذكية (Smart Retry for Failed Orders)
   // ──────────────────────────────────────────────────────────────
@@ -533,21 +596,24 @@ export class OrderService {
         order.status = 'DRAFT_CREATED';
         order.daftraDraftInvoiceId = existingDaftraInvoice.id;
         order.daftraInvoiceNumber = existingDaftraInvoice.no || `INV-${existingDaftraInvoice.id}`;
-        order.statusMessage = `تم العثور على المسودة رقم ${order.daftraInvoiceNumber} مسجلة مسبقاً في دفترة، تم ربطها بنجاح دون تكرار.`;
+        order.statusMessage = `تم العثور على الفاتورة رقم ${order.daftraInvoiceNumber} مسجلة مسبقاً في دفترة، تم ربطها بنجاح دون تكرار.`;
         await order.save();
         logger.info(`[OrderService] Idempotency: Linked existing Daftra invoice #${order.daftraDraftInvoiceId} for order ${order.storeOrderId}`);
         return order;
       }
 
       const invoiceResult = await this.createDraftInvoice(order, orderItems, paymentMapping);
+      const paymentRecorded = await this.recordInvoicePayment(invoiceResult.invoiceId, order, paymentMapping);
 
       order.status = 'DRAFT_CREATED';
       order.daftraDraftInvoiceId = invoiceResult.invoiceId;
       order.daftraInvoiceNumber = invoiceResult.invoiceNumber;
-      order.statusMessage = `مسودة الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها بنجاح بعد إعادة المحاولة.`;
+      order.statusMessage = paymentRecorded
+        ? `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة ومسددة في خزينة (${paymentMapping.treasuryName || paymentMapping.paymentMethodLabel}) بنجاح بعد إعادة المحاولة.`
+        : `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة في دفترة (غير مسددة) بعد إعادة المحاولة.`;
       await order.save();
 
-      logger.info(`[OrderService] Retry SUCCESS: Draft ${invoiceResult.invoiceNumber} for order ${order.storeOrderId}`);
+      logger.info(`[OrderService] Retry SUCCESS: Invoice ${invoiceResult.invoiceNumber} for order ${order.storeOrderId} (Payment recorded: ${paymentRecorded})`);
     } catch (error: any) {
       order.status = 'FAILED';
       order.statusMessage = `فشلت إعادة المحاولة: ${error.message}`;
