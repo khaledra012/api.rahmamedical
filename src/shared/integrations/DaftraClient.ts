@@ -101,6 +101,25 @@ export class DaftraClient {
   }
 
   /**
+   * Get stock transactions from Daftra (for tracking purchases, inventory receipts, POS sales)
+   */
+  public async getStockTransactions(page: number = 1, limit: number = 50): Promise<any> {
+    try {
+      const res = await this.client.get('https://rahmamedical.daftra.com/v2/api/entity/stock_transaction/list', {
+        params: { page, per_page: limit, 'order[id]': 'desc' },
+      });
+      return res.data;
+    } catch (err: any) {
+      logger.warn(`[DaftraClient] v2 stock_transaction list failed, falling back to api2:`, err.message);
+      return this.request({
+        method: 'GET',
+        url: `/stock_transactions.json`,
+        params: { page, limit },
+      });
+    }
+  }
+
+  /**
    * Search product in Daftra by SKU (product_code)
    * الخطوة الثانية: البحث أونلاين في دفترة بكود الصنف
    */

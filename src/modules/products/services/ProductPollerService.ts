@@ -133,13 +133,91 @@ export class ProductPollerService {
           }
         }
 
-        // إذا وصلنا لمنتجات أقدم من آخر 5 دقائق أو انتهت الصفحات نتوقف فوراً
         if (reachedOlderProducts || rawProducts.length < limit) {
           hasMore = false;
         } else {
           page++;
           // تأخير زمني بسيط (250ms) لتفادي حدود الطلبات (Rate Limit 429) من خادم دفترة عند تصفح صفحات متتالية
           await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+
+      // 2. استدعاء API دفترة لجلب أحدث حركات المخزون (فواتير المشتريات، أذون الإضافة، المبيعات المباشرة)
+      let stockTxPage = 1;
+      let hasMoreStockTx = true;
+      const affectedProductIds = new Set<number>();
+
+      while (hasMoreStockTx && stockTxPage <= 20) {
+        const txRes: any = await daftraClient.getStockTransactions(stockTxPage, 50);
+        const rawTxs: any[] = Array.isArray(txRes?.data) ? txRes.data : [];
+
+        if (rawTxs.length === 0) {
+          hasMoreStockTx = false;
+          break;
+        }
+
+        let reachedOlderTx = false;
+
+        for (const rawTx of rawTxs) {
+          const tx = rawTx.StockTransaction || rawTx;
+          const rawDateStr = tx.date || tx.created || tx.modified;
+          let txDate: Date | null = null;
+          if (rawDateStr) {
+            const str = String(rawDateStr).trim();
+            if (str.includes('T') && (str.endsWith('Z') || str.includes('+') || str.includes('-'))) {
+              const d = new Date(str);
+              if (!isNaN(d.getTime())) txDate = d;
+            } else {
+              const isoLike = str.replace(' ', 'T') + '+03:00';
+              const d = new Date(isoLike);
+              if (!isNaN(d.getTime())) txDate = d;
+            }
+          }
+
+          if (txDate && (txDate < windowStart || txDate < baselineDate)) {
+            reachedOlderTx = true;
+            break;
+          }
+
+          const prodId = parseInt(String(tx.product_id));
+          if (prodId && !isNaN(prodId)) {
+            affectedProductIds.add(prodId);
+          }
+        }
+
+        if (reachedOlderTx || rawTxs.length < 50) {
+          hasMoreStockTx = false;
+        } else {
+          stockTxPage++;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+
+      // إذا وجدت حركات مخزنية، نتحقق من الأصناف المسجلة في الداشبورد لدينا
+      if (affectedProductIds.size > 0) {
+        const trackedProducts = await Product.findAll({
+          where: {
+            daftraProductId: Array.from(affectedProductIds),
+          },
+          attributes: ['id', 'daftraProductId', 'sku', 'stockQuantity'],
+        });
+
+        for (const tp of trackedProducts) {
+          const alreadyProcessed = candidateProducts.some((c) => c.payload?.id === tp.daftraProductId);
+          if (!alreadyProcessed) {
+            try {
+              const freshRes: any = await daftraClient.getProduct(tp.daftraProductId);
+              const freshPayload = freshRes?.data?.Product || freshRes?.data;
+              if (freshPayload && freshPayload.id) {
+                logger.info(
+                  `[ProductPoller] Detected stock transaction for product #${tp.daftraProductId} (${tp.sku}). Ingesting fresh stock balance.`
+                );
+                candidateProducts.push({ payload: freshPayload, timestamp: new Date() });
+              }
+            } catch (fetchErr: any) {
+              logger.warn(`[ProductPoller] Could not fetch fresh stock for product #${tp.daftraProductId}: ${fetchErr.message}`);
+            }
+          }
         }
       }
 
