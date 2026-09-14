@@ -8,7 +8,7 @@ import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
 import { zidClient } from '../../../shared/integrations/ZidClient';
 import { env } from '../../../config/env';
-import { logger, extractAddressDetails } from '../../../shared/helpers';
+import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared/helpers';
 
 import { NotFoundError, ConflictError } from '../../../shared/errors';
 import {
@@ -255,10 +255,12 @@ export class OrderService {
 
     try {
       const addressToSave = streetAddress || shippingAddress || undefined;
+      const zatcaPhone = formatZatcaPhone(customerPhone);
 
       // 1. البحث برقم الهاتف
-      if (customerPhone) {
-        const clientByPhone = await daftraClient.searchClientByPhone(customerPhone);
+      const phoneToSearch = customerPhone || zatcaPhone;
+      if (phoneToSearch) {
+        const clientByPhone = await daftraClient.searchClientByPhone(phoneToSearch);
         if (clientByPhone?.id) {
           const cId = parseInt(String(clientByPhone.id), 10);
           daftraClient
@@ -269,6 +271,7 @@ export class OrderService {
               city: city || undefined,
               country_code: countryCode || 'SA',
               address1: addressToSave,
+              phone1: zatcaPhone || undefined,
             })
             .catch(() => {});
           return cId;
@@ -288,6 +291,7 @@ export class OrderService {
               city: city || undefined,
               country_code: countryCode || 'SA',
               address1: addressToSave,
+              phone1: zatcaPhone || undefined,
             })
             .catch(() => {});
           return cId;
@@ -302,7 +306,7 @@ export class OrderService {
           first_name: '',
           last_name: '',
           email: customerEmail || `customer_${Date.now()}@rahmamedical.online`,
-          phone1: customerPhone || undefined,
+          phone1: zatcaPhone || undefined,
           address1: addressToSave,
           city: city || undefined,
           country_code: countryCode || 'SA',
@@ -329,6 +333,7 @@ export class OrderService {
     // استخراج بيانات العنوان والدولة والمدينة بالتفصيل
     const rawData: any = order.rawOrderData || {};
     const addressInfo = extractAddressDetails(rawData.shipping, rawData.shipping_address);
+    const zatcaPhone = formatZatcaPhone(order.customerPhone);
 
     // تحديد حساب الإيراد حسب قناة البيع (Channel Revenue Separation)
     const revenueAccountId =
@@ -350,7 +355,7 @@ export class OrderService {
     const invoiceNotes = [
       `طلب ${order.storeType === 'ZID' ? 'متجر زد' : 'ترينديول'} #${order.storeOrderId}`,
       `العميل: ${order.customerName}`,
-      order.customerPhone ? `الجوال: ${order.customerPhone}` : '',
+      (zatcaPhone || order.customerPhone) ? `الجوال: ${zatcaPhone || order.customerPhone}` : '',
       order.shippingAddress ? `عنوان الشحن: ${order.shippingAddress}` : '',
       `وسيلة الدفع: ${paymentMapping.paymentMethodLabel}`,
     ]
@@ -382,7 +387,7 @@ export class OrderService {
         client_business_name: (order.customerName || '').trim() || undefined,
         client_first_name: firstName,
         client_last_name: lastName,
-        client_phone1: order.customerPhone || undefined,
+        client_phone1: zatcaPhone || undefined,
         client_email: order.customerEmail || 'orders@rahmamedical.online',
         client_address1: addressInfo.streetAddress || undefined,
         client_city: addressInfo.city || undefined,
@@ -391,6 +396,7 @@ export class OrderService {
         draft: 0,
         is_draft: 0, // فاتورة معتمدة ومُصدرة مباشرة
         notes: invoiceNotes,
+
         date:
           order.orderDate && !isNaN(order.orderDate.getTime())
             ? order.orderDate.toISOString().split('T')[0]

@@ -3,7 +3,7 @@ import { orderService } from '../services/OrderService';
 import { env } from '../../../config/env';
 import { asyncHandler } from '../../../shared/middlewares/asyncHandler';
 import { IncomingOrderPayload } from '../dtos/order.dtos';
-import { logger, extractAddressDetails } from '../../../shared/helpers';
+import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared/helpers';
 
 export class OrderWebhookController {
   /**
@@ -82,11 +82,12 @@ export class OrderWebhookController {
         raw.shipping_address?.name ||
         'عميل زد',
       customerPhone:
-        raw.customer?.mobile ||
-        raw.customer?.phone ||
-        raw.shipping?.phone ||
-        raw.shipping_address?.phone ||
-        '',
+        formatZatcaPhone(
+          raw.customer?.mobile ||
+          raw.customer?.phone ||
+          raw.shipping?.phone ||
+          raw.shipping_address?.phone
+        ) || '',
       customerEmail: raw.customer?.email || null,
       shippingAddress: addressInfo.fullAddress,
       paymentMethod: String(paymentMethodCode).toLowerCase(),
@@ -142,7 +143,7 @@ export class OrderWebhookController {
       customerName: body.customerFirstName
         ? `${body.customerFirstName} ${body.customerLastName || ''}`.trim()
         : 'عميل ترينديول',
-      customerPhone: body.customerPhone || body.shipmentAddress?.phone || '',
+      customerPhone: formatZatcaPhone(body.customerPhone || body.shipmentAddress?.phone) || '',
       customerEmail: body.customerEmail || null,
       shippingAddress: [
         body.shipmentAddress?.address1,

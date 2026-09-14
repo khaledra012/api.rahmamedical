@@ -1,7 +1,7 @@
 import { orderService } from './OrderService';
 import { env } from '../../../config/env';
 import { zidClient } from '../../../shared/integrations/ZidClient';
-import { logger, extractAddressDetails } from '../../../shared/helpers';
+import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared/helpers';
 import { SyncLog } from '../../products/models/SyncLog';
 import { SystemSetting } from '../../../shared/models/SystemSetting';
 
@@ -182,11 +182,12 @@ export class OrderPollerService {
               detailedOrder.shipping_address?.name ||
               'عميل زد',
             customerPhone:
-              detailedOrder.customer?.mobile ||
-              detailedOrder.customer?.phone ||
-              detailedOrder.shipping?.phone ||
-              detailedOrder.shipping_address?.phone ||
-              '',
+              formatZatcaPhone(
+                detailedOrder.customer?.mobile ||
+                detailedOrder.customer?.phone ||
+                detailedOrder.shipping?.phone ||
+                detailedOrder.shipping_address?.phone
+              ) || '',
             customerEmail: detailedOrder.customer?.email || null,
             shippingAddress: addressInfo.fullAddress,
             paymentMethod: String(paymentMethodCode).toLowerCase(),
