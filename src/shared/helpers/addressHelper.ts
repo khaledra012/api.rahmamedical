@@ -10,15 +10,37 @@ export interface ExtractedAddress {
 
 export function resolveCountryCode(countryNameOrId?: string | number | null): string {
   if (!countryNameOrId) return 'SA';
-  const str = String(countryNameOrId).trim().toLowerCase();
-  if (str === '184' || str.includes('سعود') || str.includes('sa') || str.includes('ksa')) return 'SA';
-  if (str === '17' || str.includes('بحرين') || str.includes('bh') || str.includes('bahrain')) return 'BH';
-  if (str.includes('امارات') || str.includes('إمارات') || str.includes('ae') || str.includes('uae')) return 'AE';
-  if (str.includes('كويت') || str.includes('kw') || str.includes('kuwait')) return 'KW';
-  if (str.includes('عمان') || str.includes('عُمان') || str.includes('om') || str.includes('oman')) return 'OM';
-  if (str.includes('قطر') || str.includes('qa') || str.includes('qatar')) return 'QA';
-  if (str.includes('مصر') || str.includes('eg') || str.includes('egypt')) return 'EG';
+  const raw = String(countryNameOrId).trim();
+  const lower = raw.toLowerCase();
+
+  // السعودية
+  if (raw === '184' || lower.includes('سعود') || lower === 'sa' || lower === 'ksa') return 'SA';
+
+  // دول الخليج والدول العربية
+  if (raw === '17' || lower.includes('بحرين') || lower === 'bh' || lower.includes('bahrain')) return 'BH';
+  if (lower.includes('امارات') || lower.includes('إمارات') || lower === 'ae' || lower.includes('uae')) return 'AE';
+  if (lower.includes('كويت') || lower === 'kw' || lower.includes('kuwait')) return 'KW';
+  if (lower.includes('عمان') || lower.includes('عُمان') || lower === 'om' || lower.includes('oman')) return 'OM';
+  if (lower.includes('قطر') || lower === 'qa' || lower.includes('qatar')) return 'QA';
+  if (lower.includes('مصر') || lower === 'eg' || lower.includes('egypt')) return 'EG';
+  if (lower.includes('أردن') || lower.includes('اردن') || lower === 'jo' || lower.includes('jordan')) return 'JO';
+
+  // إذا كان كود ISO من حرفين إنجليزيين
+  if (/^[A-Za-z]{2}$/.test(raw)) {
+    const upper = raw.toUpperCase();
+    return upper === 'SA' ? 'SA' : upper;
+  }
+
   return 'SA';
+}
+
+/**
+ * فحص ما إذا كان الطلب دولياً (تصدير خارج المملكة)
+ */
+export function isInternationalCountry(countryCode?: string | null): boolean {
+  if (!countryCode) return false;
+  const clean = countryCode.trim().toUpperCase();
+  return clean !== 'SA' && clean !== 'KSA';
 }
 
 export function extractAddressDetails(shipping: any, shippingAddress: any): ExtractedAddress {

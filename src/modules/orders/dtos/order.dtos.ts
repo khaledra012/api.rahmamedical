@@ -108,6 +108,8 @@ export interface DaftraInvoicePayload {
     quantity: number;
     discount?: number;
     tax1?: number;
+    exemption_reason_code?: string;
+    exemption_reason?: string;
     account_id: number;
   }>;
   Payment?: Array<{

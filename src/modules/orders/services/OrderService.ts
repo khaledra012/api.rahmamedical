@@ -8,7 +8,13 @@ import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
 import { zidClient } from '../../../shared/integrations/ZidClient';
 import { env } from '../../../config/env';
-import { logger, extractAddressDetails, formatZatcaPhone, sanitizeEmail } from '../../../shared/helpers';
+import {
+  logger,
+  extractAddressDetails,
+  formatZatcaPhone,
+  sanitizeEmail,
+  isInternationalCountry,
+} from '../../../shared/helpers';
 
 import { NotFoundError, ConflictError } from '../../../shared/errors';
 import {
@@ -334,6 +340,7 @@ export class OrderService {
     const rawData: any = order.rawOrderData || {};
     const addressInfo = extractAddressDetails(rawData.shipping, rawData.shipping_address);
     const zatcaPhone = formatZatcaPhone(order.customerPhone);
+    const isInternational = isInternationalCountry(addressInfo.countryCode);
 
     // تحديد حساب الإيراد حسب قناة البيع (Channel Revenue Separation)
     const revenueAccountId =
@@ -354,26 +361,46 @@ export class OrderService {
     // بناء ملاحظات الفاتورة (Customer details in notes)
     const invoiceNotes = [
       `طلب ${order.storeType === 'ZID' ? 'متجر زد' : 'ترينديول'} #${order.storeOrderId}`,
+      isInternational ? `🌍 نوع المعاملة: تصدير دولي (المادة 32 - كود إعفاء الزكاة: VATEX-SA-EXPORT)` : '',
       `العميل: ${order.customerName}`,
       (zatcaPhone || order.customerPhone) ? `الجوال: ${zatcaPhone || order.customerPhone}` : '',
       order.shippingAddress ? `عنوان الشحن: ${order.shippingAddress}` : '',
+      isInternational ? `دولة الشحن: ${addressInfo.countryName || addressInfo.countryCode}` : '',
       `وسيلة الدفع: ${paymentMapping.paymentMethodLabel}`,
     ]
       .filter(Boolean)
       .join(' | ');
 
-    // بناء بنود الأصناف (Invoice Items)
-    const invoiceItems = items.map((item) => ({
-      product_id: item.daftraProductId!,
-      item_id: item.daftraProductId!,
-      item: item.productName,
-      description: item.productName,
-      unit_price: item.unitPrice,
-      quantity: item.quantity,
-      discount: item.discount || 0,
-      tax1: item.taxPercentage === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15InclusiveTaxId,
-      account_id: revenueAccountId,
-    }));
+    // بناء بنود الأصناف (Invoice Items) مع دعم التصدير الدولي
+    const invoiceItems = items.map((item) => {
+      if (isInternational) {
+        return {
+          product_id: item.daftraProductId!,
+          item_id: item.daftraProductId!,
+          item: item.productName,
+          description: `${item.productName} (تصدير دولي - إعفاء بموجب المادة 32)`,
+          unit_price: item.unitPrice,
+          quantity: item.quantity,
+          discount: item.discount || 0,
+          tax1: env.daftra.vatZeroTaxId, // صفرية 0% (معرف 5 بدفترة)
+          exemption_reason_code: 'VATEX-SA-EXPORT',
+          exemption_reason: 'تصدير سلع لخارج المملكة (المادة 32)',
+          account_id: revenueAccountId,
+        };
+      }
+
+      return {
+        product_id: item.daftraProductId!,
+        item_id: item.daftraProductId!,
+        item: item.productName,
+        description: item.productName,
+        unit_price: item.unitPrice,
+        quantity: item.quantity,
+        discount: item.discount || 0,
+        tax1: item.taxPercentage === 0 ? env.daftra.vatZeroTaxId : env.daftra.vat15InclusiveTaxId,
+        account_id: revenueAccountId,
+      };
+    });
 
     // استخراج الاسم الأول والأخير للعميل لضمان ظهوره بشكل سليم في قوالب فواتير دفترة
     const nameParts = (order.customerName || '').trim().split(/\s+/);
@@ -405,7 +432,7 @@ export class OrderService {
           ? {
               shipping_options: '1',
               shipping_amount: Number(order.shippingFee),
-              shipping_tax_id: order.taxAmount === 0 ? 0 : env.daftra.vat15InclusiveTaxId,
+              shipping_tax_id: isInternational || order.taxAmount === 0 ? 0 : env.daftra.vat15InclusiveTaxId,
             }
           : {}),
         ...(order.discountAmount > 0
