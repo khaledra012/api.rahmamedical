@@ -8,7 +8,7 @@ import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
 import { zidClient } from '../../../shared/integrations/ZidClient';
 import { env } from '../../../config/env';
-import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared/helpers';
+import { logger, extractAddressDetails, formatZatcaPhone, sanitizeEmail } from '../../../shared/helpers';
 
 import { NotFoundError, ConflictError } from '../../../shared/errors';
 import {
@@ -305,7 +305,7 @@ export class OrderService {
           business_name: name,
           first_name: '',
           last_name: '',
-          email: customerEmail || `customer_${Date.now()}@rahmamedical.online`,
+          email: sanitizeEmail(customerEmail, `customer_${Date.now()}@rahmamedical.online`),
           phone1: zatcaPhone || undefined,
           address1: addressToSave,
           city: city || undefined,
@@ -388,7 +388,7 @@ export class OrderService {
         client_first_name: firstName,
         client_last_name: lastName,
         client_phone1: zatcaPhone || undefined,
-        client_email: order.customerEmail || 'orders@rahmamedical.online',
+        client_email: sanitizeEmail(order.customerEmail),
         client_address1: addressInfo.streetAddress || undefined,
         client_city: addressInfo.city || undefined,
         client_country_code: addressInfo.countryCode || 'SA',
