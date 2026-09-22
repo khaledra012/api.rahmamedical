@@ -37,6 +37,13 @@ export class OrderController {
     sendSuccess(res, order);
   });
 
+  /** POST /api/orders/:id/retry-cancellation */
+  static retryOrderCancellation = asyncHandler(async (req: Request, res: Response) => {
+    const orderId = parseInt(req.params.id as string, 10);
+    const order = await orderService.retryOrderCancellation(orderId);
+    sendSuccess(res, order);
+  });
+
   /**
    * POST /api/orders/simulate - محاكاة طلب تجريبي للاختبار
    */

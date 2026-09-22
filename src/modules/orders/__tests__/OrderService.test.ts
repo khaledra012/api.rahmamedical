@@ -6,6 +6,7 @@ import { Product } from '../../products/models/Product';
 import { ProductMapping } from '../../products/models/ProductMapping';
 import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
+import { zidClient } from '../../../shared/integrations/ZidClient';
 import {
   mockZidOrderWebhook,
   mockTrendyolOrderWebhook,
@@ -23,6 +24,7 @@ jest.mock('../../products/models/Product');
 jest.mock('../../products/models/ProductMapping');
 jest.mock('../../products/models/SyncLog');
 jest.mock('../../../shared/integrations/DaftraClient');
+jest.mock('../../../shared/integrations/ZidClient');
 
 const MockOrder = Order as jest.Mocked<typeof Order>;
 const MockOrderItem = OrderItem as jest.Mocked<typeof OrderItem>;
@@ -31,6 +33,7 @@ const MockProduct = Product as jest.Mocked<typeof Product>;
 const MockProductMapping = ProductMapping as jest.Mocked<typeof ProductMapping>;
 const MockSyncLog = SyncLog as jest.Mocked<typeof SyncLog>;
 const MockDaftraClient = daftraClient as jest.Mocked<typeof daftraClient>;
+const MockZidClient = zidClient as jest.Mocked<typeof zidClient>;
 
 describe('OrderService Unit Tests', () => {
   let service: OrderService;
@@ -444,6 +447,203 @@ describe('OrderService Unit Tests', () => {
       (MockOrder.findByPk as jest.Mock).mockResolvedValue(null);
 
       await expect(service.retryOrder(999)).rejects.toThrow('الطلب غير موجود');
+    });
+  });
+
+  describe('handleZidOrderCancellation() — Full cancellation before shipping', () => {
+    const cancelledZidOrder = {
+      order: {
+        id: 10245,
+        order_status: { code: 'cancelled', name: 'ملغي' },
+        display_status: { code: 'cancelled' },
+        customer: { name: 'عميل زد', mobile: '0500000000' },
+        order_total: 106.75,
+        shipping: { method: { order_shipping_status: null } },
+        histories: [
+          { order_status_name: 'ملغي', comment: 'طلب العميل الإلغاء' },
+          { order_status_name: 'جديد' },
+        ],
+        delivered_at: null,
+      },
+    };
+
+    beforeEach(() => {
+      (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue(cancelledZidOrder);
+      (MockSyncLog.create as jest.Mock).mockResolvedValue({});
+      (MockDaftraClient.getInvoice as jest.Mock).mockResolvedValue({
+        data: {
+          Invoice: {
+            id: 7001,
+            client_id: 3964,
+            InvoiceItem: [
+              {
+                product_id: 1359,
+                item: 'منتج طبي',
+                description: 'منتج طبي',
+                unit_price: 75,
+                quantity: 1,
+                discount: 0,
+                tax1: 7,
+                sales_account_id: 4689,
+              },
+            ],
+          },
+        },
+      });
+    });
+
+    it('marks an order cancelled without calling Daftra when no invoice exists', async () => {
+      const order: any = {
+        id: 10,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        status: 'PROCESSING',
+        daftraDraftInvoiceId: null,
+        daftraInvoiceNumber: null,
+        daftraRefundReceiptId: null,
+        cancelledAt: null,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+
+      const result = await service.handleZidOrderCancellation('10245', { payload: { id: 10245 } });
+
+      expect(result.status).toBe('CANCELLED');
+      expect(result.statusMessage).toContain('قبل إصدار فاتورة');
+      expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
+    });
+
+    it('creates one full Daftra refund receipt linked to the source invoice without a Payment block', async () => {
+      const order: any = {
+        id: 11,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        status: 'DRAFT_CREATED',
+        daftraDraftInvoiceId: 7001,
+        daftraInvoiceNumber: 'INV-7001',
+        daftraRefundReceiptId: null,
+        daftraRefundReceiptNumber: null,
+        cancellationReason: null,
+        cancelledAt: null,
+        shippingFee: 25,
+        discountAmount: 5,
+        taxAmount: 10,
+        rawOrderData: {},
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockOrderItem.findAll as jest.Mock).mockResolvedValue([
+        {
+          orderId: 11,
+          productName: 'منتج طبي',
+          daftraProductId: 1359,
+          unitPrice: 75,
+          quantity: 1,
+          discount: 0,
+          taxPercentage: 15,
+        },
+      ]);
+      (MockDaftraClient.findRefundReceiptByInvoice as jest.Mock).mockResolvedValue(null);
+      (MockDaftraClient.createRefundReceipt as jest.Mock).mockResolvedValue({
+        id: 9001,
+        invoice_number: 'RR-9001',
+      });
+
+      const result = await service.handleZidOrderCancellation('10245', { payload: { id: 10245 } });
+
+      expect(result.status).toBe('CANCELLED');
+      expect(result.daftraRefundReceiptId).toBe(9001);
+      expect(result.daftraRefundReceiptNumber).toBe('RR-9001');
+      expect(MockDaftraClient.createRefundReceipt).toHaveBeenCalledTimes(1);
+      const payload = (MockDaftraClient.createRefundReceipt as jest.Mock).mock.calls[0][0];
+      expect(payload.Invoice.subscription_id).toBe(7001);
+      expect(payload.Invoice.client_id).toBe(3964);
+      expect(payload.InvoiceItem).toHaveLength(1);
+      expect(payload.Payment).toBeUndefined();
+    });
+
+    it('coalesces concurrent duplicate cancellation webhooks into one Daftra return request', async () => {
+      const order: any = {
+        id: 14,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        status: 'DRAFT_CREATED',
+        daftraDraftInvoiceId: 7001,
+        daftraInvoiceNumber: 'INV-7001',
+        daftraRefundReceiptId: null,
+        cancelledAt: null,
+        shippingFee: 0,
+        discountAmount: 0,
+        taxAmount: 10,
+        rawOrderData: {},
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockDaftraClient.findRefundReceiptByInvoice as jest.Mock).mockResolvedValue(null);
+      (MockDaftraClient.createRefundReceipt as jest.Mock).mockResolvedValue({
+        id: 9002,
+        invoice_number: 'RR-9002',
+      });
+
+      const [first, second] = await Promise.all([
+        service.handleZidOrderCancellation('10245', {}),
+        service.handleZidOrderCancellation('10245', {}),
+      ]);
+
+      expect(first.daftraRefundReceiptId).toBe(9002);
+      expect(second.daftraRefundReceiptId).toBe(9002);
+      expect(MockDaftraClient.createRefundReceipt).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses an existing Daftra refund receipt instead of creating a duplicate', async () => {
+      const order: any = {
+        id: 12,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        status: 'CANCEL_FAILED',
+        daftraDraftInvoiceId: 7001,
+        daftraRefundReceiptId: null,
+        cancelledAt: new Date(),
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockDaftraClient.findRefundReceiptByInvoice as jest.Mock).mockResolvedValue({
+        id: 9001,
+        no: 'RR-9001',
+        subscription_id: 7001,
+      });
+
+      const result = await service.handleZidOrderCancellation('10245', {});
+
+      expect(result.status).toBe('CANCELLED');
+      expect(result.daftraRefundReceiptId).toBe(9001);
+      expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
+    });
+
+    it('requires manual review and does not create a return after shipping', async () => {
+      (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue({
+        order: {
+          ...cancelledZidOrder.order,
+          delivered_at: '2026-09-20T10:00:00Z',
+          histories: [{ order_status_name: 'تم التوصيل' }, { order_status_name: 'ملغي' }],
+        },
+      });
+      const order: any = {
+        id: 13,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        status: 'DRAFT_CREATED',
+        daftraDraftInvoiceId: 7001,
+        cancelledAt: null,
+        save: jest.fn().mockResolvedValue(true),
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+
+      const result = await service.handleZidOrderCancellation('10245', {});
+
+      expect(result.status).toBe('CANCEL_REVIEW_REQUIRED');
+      expect(MockDaftraClient.findRefundReceiptByInvoice).not.toHaveBeenCalled();
+      expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
     });
   });
 });

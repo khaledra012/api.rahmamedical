@@ -23,9 +23,12 @@ import {
   DaftraInvoicePayload,
   OrderStatsDTO,
   OrderFilterParams,
+  DaftraRefundReceiptPayload,
 } from '../dtos/order.dtos';
 
 export class OrderService {
+  private readonly cancellationRequests = new Map<string, Promise<Order>>();
+
   // ──────────────────────────────────────────────────────────────
   // 1. استقبال الطلب مع حماية التكرار (Idempotent Ingestion)
   // ──────────────────────────────────────────────────────────────
@@ -106,6 +109,14 @@ export class OrderService {
       return order;
     }
 
+    // قد يصل إلغاء زد أثناء مطابقة البنود؛ أعد قراءة السجل قبل أي كتابة مالية خارجية.
+    if (typeof (order as any).reload === 'function') {
+      await order.reload();
+      if (['CANCEL_PENDING', 'CANCELLED', 'CANCEL_REVIEW_REQUIRED'].includes(order.status)) {
+        return order;
+      }
+    }
+
     // تجهيز وإرسال الفاتورة لدفترة (معتمدة ومباشرة)
     try {
       const invoiceResult = await this.createDraftInvoice(order, orderItems, paymentMapping);
@@ -118,6 +129,17 @@ export class OrderService {
         ? `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة ومسددة في خزينة (${paymentMapping.treasuryName || paymentMapping.paymentMethodLabel}) بنجاح.`
         : `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة في دفترة (غير مسددة).`;
       await order.save();
+
+      // يغطي سباقاً نادراً: وصل الإلغاء بينما كان طلب إنشاء الفاتورة قيد التنفيذ.
+      if (typeof (order as any).reload === 'function') {
+        await order.reload();
+        if (order.cancelledAt) {
+          return await this.handleZidOrderCancellation(
+            order.storeOrderId.replace(/^ZID-/i, ''),
+            order.rawOrderData
+          );
+        }
+      }
 
       // توثيق العملية في سجل المعاملات
       await SyncLog.create({
@@ -155,6 +177,306 @@ export class OrderService {
     }
 
     return order;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // 1.B إلغاء طلب زد بالكامل قبل الشحن
+  // ──────────────────────────────────────────────────────────────
+  async handleZidOrderCancellation(zidOrderId: string, webhookPayload: any): Promise<Order> {
+    const cleanZidOrderId = String(zidOrderId).replace(/^ZID-/i, '');
+    const storeOrderId = `ZID-${cleanZidOrderId}`;
+
+    const activeRequest = this.cancellationRequests.get(storeOrderId);
+    if (activeRequest) {
+      return activeRequest;
+    }
+
+    const request = this.processZidOrderCancellation(cleanZidOrderId, storeOrderId, webhookPayload);
+    this.cancellationRequests.set(storeOrderId, request);
+    try {
+      return await request;
+    } finally {
+      if (this.cancellationRequests.get(storeOrderId) === request) {
+        this.cancellationRequests.delete(storeOrderId);
+      }
+    }
+  }
+
+  private async processZidOrderCancellation(
+    cleanZidOrderId: string,
+    storeOrderId: string,
+    webhookPayload: any
+  ): Promise<Order> {
+
+    let detailsResponse: any;
+    try {
+      detailsResponse = await zidClient.getOrderDetails(cleanZidOrderId);
+    } catch (error: any) {
+      logger.error(`[OrderCancellation] Could not verify Zid order ${storeOrderId}: ${error.message}`);
+      throw error;
+    }
+
+    const details = detailsResponse?.order || detailsResponse?.data?.order || detailsResponse?.data || detailsResponse;
+    const currentZidStatus = String(
+      details?.order_status?.code || details?.display_status?.code || details?.status?.code || ''
+    ).toLowerCase();
+
+    if (!['cancelled', 'canceled'].includes(currentZidStatus)) {
+      throw new ConflictError(`طلب زد ${storeOrderId} ليس في حالة ملغي حالياً`);
+    }
+
+    let order = await Order.findOne({ where: { storeOrderId } });
+    const cancellationReason = this.extractCancellationReason(webhookPayload, details);
+
+    // لو وصل إشعار الإلغاء قبل إشعار الإنشاء نحفظ طلباً ملغياً مختصراً.
+    // وصول order.create لاحقاً سيتوقف عند صمام منع التكرار ولن يصدر فاتورة.
+    if (!order) {
+      order = await Order.create({
+        storeOrderId,
+        storeType: 'ZID',
+        customerName:
+          details?.customer?.name ||
+          [details?.customer?.first_name, details?.customer?.last_name].filter(Boolean).join(' ') ||
+          'عميل زد',
+        customerPhone: details?.customer?.mobile || details?.customer?.phone || '',
+        customerEmail: details?.customer?.email || null,
+        shippingAddress: null,
+        paymentMethod: String(
+          details?.payment?.method?.code || details?.payment_method?.code || details?.payment_status || 'unknown'
+        ).toLowerCase(),
+        subtotal: this.toNumber(details?.products_sum_total || details?.sub_total || 0),
+        shippingFee: this.toNumber(details?.shipping?.cost || details?.shipping_cost || 0),
+        discountAmount: this.toNumber(details?.discount || details?.discount_amount || 0),
+        taxAmount: this.toNumber(details?.tax_amount || details?.tax || 0),
+        totalAmount: this.toNumber(details?.order_total || details?.total || 0),
+        status: 'CANCEL_PENDING',
+        statusMessage: 'وصل إلغاء الطلب من زد قبل إصدار فاتورة في دفترة.',
+        cancellationReason,
+        cancelledAt: new Date(),
+        orderDate: details?.created_at ? new Date(details.created_at) : new Date(),
+        rawOrderData: webhookPayload || details || {},
+      });
+    }
+
+    if (order.status === 'CANCELLED' && order.daftraRefundReceiptId) {
+      return order;
+    }
+    if (order.status === 'CANCELLED' && !order.daftraDraftInvoiceId) {
+      return order;
+    }
+
+    order.cancellationReason = cancellationReason;
+    order.cancelledAt = order.cancelledAt || new Date();
+
+    if (this.zidOrderHasShipped(details)) {
+      order.status = 'CANCEL_REVIEW_REQUIRED';
+      order.statusMessage = 'الطلب الملغي لديه حركة شحن أو تسليم في زد؛ لم يتم إنشاء مرتجع تلقائي ويحتاج مراجعة يدوية.';
+      await order.save();
+      logger.warn(`[OrderCancellation] ${storeOrderId} requires manual review because it has shipping activity.`);
+      return order;
+    }
+
+    order.status = 'CANCEL_PENDING';
+    order.statusMessage = 'تم استلام الإلغاء من زد وجارٍ عكس الفاتورة في دفترة.';
+    await order.save();
+
+    // لم تُصدر فاتورة بعد: يكفي منع فوترة الطلب مستقبلاً.
+    if (!order.daftraDraftInvoiceId) {
+      if (order.daftraInvoiceNumber) {
+        order.status = 'CANCEL_REVIEW_REQUIRED';
+        order.statusMessage = 'يوجد رقم فاتورة محفوظ بدون معرف دفترة؛ يلزم التحقق اليدوي قبل إنشاء مرتجع.';
+      } else {
+        order.status = 'CANCELLED';
+        order.statusMessage = 'تم إلغاء الطلب قبل إصدار فاتورة في دفترة.';
+      }
+      await order.save();
+      return order;
+    }
+
+    try {
+      const existingReceipt = await daftraClient.findRefundReceiptByInvoice(
+        order.daftraDraftInvoiceId,
+        storeOrderId
+      );
+
+      if (existingReceipt) {
+        order.daftraRefundReceiptId = Number(existingReceipt.id);
+        order.daftraRefundReceiptNumber = String(
+          existingReceipt.no || existingReceipt.invoice_number || `RR-${existingReceipt.id}`
+        );
+        order.status = 'CANCELLED';
+        order.statusMessage = `تم ربط مرتجع دفترة الموجود مسبقاً رقم ${order.daftraRefundReceiptNumber}.`;
+        await order.save();
+        return order;
+      }
+
+      const sourceResponse: any = await daftraClient.getInvoice(order.daftraDraftInvoiceId);
+      const sourceInvoice: any =
+        sourceResponse?.data?.Invoice || sourceResponse?.Invoice || sourceResponse?.data || sourceResponse;
+      const sourceItems: any[] = Array.isArray(sourceInvoice?.InvoiceItem)
+        ? sourceInvoice.InvoiceItem
+        : [];
+      if (!sourceInvoice?.client_id || sourceItems.length === 0) {
+        order.status = 'CANCEL_REVIEW_REQUIRED';
+        order.statusMessage = 'تعذر قراءة العميل أو بنود الفاتورة الأصلية من دفترة لبناء مرتجع كامل.';
+        await order.save();
+        return order;
+      }
+
+      const refundPayload = this.buildFullRefundReceiptPayload(order, sourceInvoice, sourceItems);
+      const response: any = await daftraClient.createRefundReceipt(refundPayload);
+      const receiptId = Number(
+        response?.id || response?.data?.RefundReceipt?.id || response?.data?.Invoice?.id || response?.data?.id || 0
+      );
+      if (!receiptId) {
+        throw new Error('دفترة قبلت إنشاء المرتجع لكنها لم تُرجع معرف المستند');
+      }
+
+      order.daftraRefundReceiptId = receiptId;
+      order.daftraRefundReceiptNumber = String(
+        response?.invoice_number ||
+        response?.data?.RefundReceipt?.no ||
+        response?.data?.Invoice?.number ||
+        `RR-${receiptId}`
+      );
+      order.status = 'CANCELLED';
+      order.statusMessage = `تم إلغاء الطلب وإنشاء مرتجع دفترة كامل رقم ${order.daftraRefundReceiptNumber}.`;
+      await order.save();
+
+      await SyncLog.create({
+        entityType: 'ORDER',
+        entityId: order.id,
+        action: 'CREATE',
+        direction: 'ZID_TO_DAFTRA',
+        source: 'WEBHOOK',
+        requestUrl: `${env.daftra.baseUrl}/refund_receipts.json`,
+        requestMethod: 'POST',
+        requestPayload: { sourceInvoiceId: order.daftraDraftInvoiceId, storeOrderId },
+        responseStatus: 202,
+        responseBody: { refundReceiptId: receiptId, refundReceiptNumber: order.daftraRefundReceiptNumber },
+        status: 'SUCCESS',
+      });
+
+      logger.info(
+        `[OrderCancellation] Created Daftra refund receipt ${order.daftraRefundReceiptNumber} for ${storeOrderId}.`
+      );
+      return order;
+    } catch (error: any) {
+      order.status = 'CANCEL_FAILED';
+      order.statusMessage = `فشل إنشاء مرتجع دفترة: ${error.message}`;
+      await order.save();
+
+      await SyncLog.create({
+        entityType: 'ORDER',
+        entityId: order.id,
+        action: 'CREATE',
+        direction: 'ZID_TO_DAFTRA',
+        source: 'WEBHOOK',
+        requestUrl: `${env.daftra.baseUrl}/refund_receipts.json`,
+        requestMethod: 'POST',
+        requestPayload: { sourceInvoiceId: order.daftraDraftInvoiceId, storeOrderId },
+        status: 'FAILED',
+        errorMessage: error.message,
+      });
+      throw error;
+    }
+  }
+
+  private buildFullRefundReceiptPayload(
+    order: Order,
+    sourceInvoice: any,
+    sourceItems: any[]
+  ): DaftraRefundReceiptPayload {
+    const rawWrapper: any = order.rawOrderData || {};
+    const rawData: any = rawWrapper?.payload || rawWrapper?.order || rawWrapper?.data || rawWrapper;
+    const addressInfo = extractAddressDetails(rawData.shipping, rawData.shipping_address);
+    const isInternational = isInternationalCountry(addressInfo.countryCode);
+    const revenueAccountId = env.daftra.zidRevenueAccountId;
+
+    return {
+      Invoice: {
+        subscription_id: order.daftraDraftInvoiceId!,
+        client_id: Number(sourceInvoice.client_id),
+        date: new Date().toISOString().split('T')[0],
+        storehouse_id: env.daftra.storehouseId,
+        draft: 0,
+        is_draft: 0,
+        notes: `إلغاء كامل لطلب زد ${order.storeOrderId} | ZID-CANCEL-${order.storeOrderId}`,
+        ...(order.shippingFee > 0
+          ? {
+              shipping_options: '1',
+              shipping_amount: Number(order.shippingFee),
+              shipping_tax_id: isInternational || order.taxAmount === 0 ? 0 : env.daftra.vat15InclusiveTaxId,
+            }
+          : {}),
+        ...(order.discountAmount > 0
+          ? { discount: Number(order.discountAmount), discount_type: 1 }
+          : {}),
+      },
+      InvoiceItem: sourceItems.map((item) => ({
+        product_id: Number(item.product_id) || undefined,
+        item_id: Number(item.product_id) || undefined,
+        item: String(item.item || item.description || 'صنف'),
+        description: String(item.description || item.item || 'صنف'),
+        unit_price: this.toNumber(item.unit_price),
+        quantity: this.toNumber(item.quantity),
+        discount: this.toNumber(item.discount),
+        discount_type: Number(item.discount_type) || undefined,
+        tax1: isInternational
+          ? env.daftra.vatZeroTaxId
+          : Number(item.tax1) || env.daftra.vat15InclusiveTaxId,
+        account_id: Number(item.sales_account_id) || revenueAccountId,
+      })),
+    };
+  }
+
+  private zidOrderHasShipped(details: any): boolean {
+    if (details?.delivered_at) return true;
+
+    const shippingStatus = String(details?.shipping?.method?.order_shipping_status || '')
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_');
+    const blockedShippingStatuses = [
+      'shipped',
+      'in_delivery',
+      'indelivery',
+      'out_for_delivery',
+      'delivered',
+      'تم_الشحن',
+      'جاري_التوصيل',
+      'في_التوصيل',
+      'تم_التوصيل',
+    ];
+    if (blockedShippingStatuses.includes(shippingStatus)) return true;
+
+    const historyNames = Array.isArray(details?.histories)
+      ? details.histories.map((history: any) => String(history?.order_status_name || '').toLowerCase())
+      : [];
+    return historyNames.some((name: string) =>
+      ['تم الشحن', 'جاري التوصيل', 'في التوصيل', 'تم التوصيل', 'shipped', 'indelivery', 'delivered']
+        .some((blocked) => name.includes(blocked))
+    );
+  }
+
+  private extractCancellationReason(webhookPayload: any, details: any): string {
+    const raw = webhookPayload?.payload || webhookPayload?.order || webhookPayload?.data || webhookPayload || {};
+    const cancelledHistory = Array.isArray(details?.histories)
+      ? details.histories.find((history: any) => String(history?.order_status_name || '').includes('ملغ'))
+      : null;
+    return String(
+      raw?.cancellation_reason ||
+      raw?.cancel_reason ||
+      raw?.reason?.name ||
+      raw?.reason ||
+      raw?.comment ||
+      cancelledHistory?.comment ||
+      'إلغاء كامل من زد'
+    );
+  }
+
+  private toNumber(value: any): number {
+    const parsed = Number.parseFloat(String(value ?? 0).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -540,6 +862,10 @@ export class OrderService {
       throw new ConflictError('الطلب قيد المعالجة بالفعل.');
     }
 
+    if (['CANCEL_PENDING', 'CANCELLED', 'CANCEL_FAILED', 'CANCEL_REVIEW_REQUIRED'].includes(order.status)) {
+      throw new ConflictError('هذا الطلب دخل مسار الإلغاء ولا يمكن إعادة محاولة فوترته.');
+    }
+
     // إعادة بناء الـ Payload من البيانات المحفوظة
     let orderItems = await OrderItem.findAll({ where: { orderId: order.id } });
 
@@ -658,13 +984,30 @@ export class OrderService {
     return order;
   }
 
+  async retryOrderCancellation(orderId: number): Promise<Order> {
+    const order = await Order.findByPk(orderId);
+    if (!order) throw new NotFoundError('الطلب غير موجود');
+    if (order.storeType !== 'ZID') throw new ConflictError('الإلغاء التلقائي متاح لطلبات زد فقط');
+    if (order.status === 'CANCELLED') return order;
+    if (!['CANCEL_FAILED', 'CANCEL_PENDING'].includes(order.status)) {
+      throw new ConflictError('الطلب ليس في حالة تسمح بإعادة محاولة الإلغاء');
+    }
+
+    return this.handleZidOrderCancellation(
+      order.storeOrderId.replace(/^ZID-/i, ''),
+      order.rawOrderData
+    );
+  }
+
   // ──────────────────────────────────────────────────────────────
   // 6. جلب قائمة الطلبات مع الفلترة (Orders List with Filters)
   // ──────────────────────────────────────────────────────────────
   async getOrders(filters: OrderFilterParams) {
     const where: any = {};
     if (filters.status === 'STALLED') {
-      where.status = { [Op.in]: ['FAILED', 'UNMAPPED_PAYMENT', 'UNMAPPED_PRODUCT'] };
+      where.status = {
+        [Op.in]: ['FAILED', 'UNMAPPED_PAYMENT', 'UNMAPPED_PRODUCT', 'CANCEL_FAILED', 'CANCEL_REVIEW_REQUIRED'],
+      };
     } else if (filters.status) {
       where.status = filters.status;
     }
@@ -699,7 +1042,15 @@ export class OrderService {
     const failedOrders = await Order.count({ where: { status: 'FAILED' } });
     const unmappedPaymentOrders = await Order.count({ where: { status: 'UNMAPPED_PAYMENT' } });
     const unmappedProductOrders = await Order.count({ where: { status: 'UNMAPPED_PRODUCT' } });
-    const stalledOrders = failedOrders + unmappedPaymentOrders + unmappedProductOrders;
+    const cancelledOrders = await Order.count({ where: { status: 'CANCELLED' } });
+    const cancellationFailedOrders = await Order.count({ where: { status: 'CANCEL_FAILED' } });
+    const cancellationReviewOrders = await Order.count({ where: { status: 'CANCEL_REVIEW_REQUIRED' } });
+    const stalledOrders =
+      failedOrders +
+      unmappedPaymentOrders +
+      unmappedProductOrders +
+      cancellationFailedOrders +
+      cancellationReviewOrders;
 
     const recentLogs = await SyncLog.findAll({
       where: { entityType: 'ORDER' },
@@ -715,6 +1066,8 @@ export class OrderService {
       unmappedPaymentOrders,
       unmappedProductOrders,
       stalledOrders,
+      cancelledOrders,
+      cancellationReviewOrders,
       recentLogs: recentLogs.map((l) => l.toJSON()),
     };
   }

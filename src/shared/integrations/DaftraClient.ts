@@ -198,6 +198,63 @@ export class DaftraClient {
     });
   }
 
+  /** Get the source invoice with its exact client and line-item data. */
+  public async getInvoice(invoiceId: number): Promise<any> {
+    return this.request({
+      method: 'GET',
+      url: `/invoices/${invoiceId}.json`,
+    });
+  }
+
+  /**
+   * Find an existing full sales return for an invoice.
+   * Errors are intentionally propagated: an unavailable lookup must never be
+   * treated as "not found", otherwise a retry could create a duplicate return.
+   */
+  public async findRefundReceiptByInvoice(invoiceId: number, orderReference: string): Promise<any | null> {
+    const findMatch = (response: any): any | null => {
+      const rows: any[] = Array.isArray(response?.data) ? response.data : [];
+      for (const row of rows) {
+        const receipt = row?.RefundReceipt || row;
+        const linkedInvoiceId = Number(receipt?.subscription_id || receipt?.source_id || 0);
+        const notes = String(receipt?.notes || '');
+        if (linkedInvoiceId === invoiceId || notes.includes(`ZID-CANCEL-${orderReference}`)) {
+          return receipt;
+        }
+      }
+      return null;
+    };
+
+    const filteredResponse: any = await this.request({
+      method: 'GET',
+      url: '/refund_receipts.json',
+      params: { source_id: invoiceId, limit: 100 },
+    });
+
+    const filteredMatch = findMatch(filteredResponse);
+    if (filteredMatch) {
+      return filteredMatch;
+    }
+
+    // Some Daftra accounts ignore or interpret source_id differently. Scan the
+    // latest receipts as a second idempotency check before creating a new one.
+    const recentResponse: any = await this.request({
+      method: 'GET',
+      url: '/refund_receipts.json',
+      params: { limit: 100 },
+    });
+    return findMatch(recentResponse);
+  }
+
+  /** Create a sales return linked to an existing Daftra invoice. */
+  public async createRefundReceipt(payload: any): Promise<any> {
+    return this.request({
+      method: 'POST',
+      url: '/refund_receipts.json',
+      data: payload,
+    });
+  }
+
   /**
    * Add a payment (سند قبض مالي) to an invoice in Daftra
    */

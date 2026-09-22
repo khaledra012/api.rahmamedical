@@ -9,7 +9,11 @@ export type OrderStatus =
   | 'UNMAPPED_PAYMENT'  // وسيلة دفع غير معرّفة (إيقاف فوري)
   | 'UNMAPPED_PRODUCT'  // صنف غير مطابق في دفترة
   | 'FAILED'            // فشل الاتصال بدفترة أو خطأ تقني
-  | 'SKIPPED';          // تم تجاهل الطلب (مكرر أو ملغي)
+  | 'SKIPPED'           // تم تجاهل الطلب (مكرر)
+  | 'CANCEL_PENDING'    // وصل إلغاء زد وجارٍ عكس الفاتورة
+  | 'CANCELLED'         // تم إلغاء الطلب وعكس فاتورته إن وجدت
+  | 'CANCEL_FAILED'     // فشل إنشاء مرتجع دفترة
+  | 'CANCEL_REVIEW_REQUIRED'; // الطلب خرج للشحن ويحتاج مراجعة يدوية
 
 export type StoreType = 'ZID' | 'TRENDYOL';
 
@@ -72,7 +76,27 @@ export interface OrderStatsDTO {
   unmappedPaymentOrders: number;
   unmappedProductOrders: number;
   stalledOrders: number;
+  cancelledOrders: number;
+  cancellationReviewOrders: number;
   recentLogs: object[];
+}
+
+export interface DaftraRefundReceiptPayload {
+  Invoice: {
+    subscription_id: number;
+    client_id: number;
+    date: string;
+    storehouse_id: number;
+    draft: number;
+    is_draft: number;
+    notes: string;
+    discount?: number;
+    discount_type?: number;
+    shipping_options?: string;
+    shipping_amount?: number;
+    shipping_tax_id?: number;
+  };
+  InvoiceItem: Array<DaftraInvoicePayload['InvoiceItem'][number] & { discount_type?: number }>;
 }
 
 export interface DaftraInvoicePayload {

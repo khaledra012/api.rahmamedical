@@ -7,6 +7,44 @@ import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared
 
 export class OrderWebhookController {
   /**
+   * POST /api/webhooks/zid/order-status-updated
+   * يعالج الإلغاء الكامل قبل الشحن ويترك رد الأموال بالكامل لزد.
+   */
+  static handleZidOrderStatusUpdated = asyncHandler(async (req: Request, res: Response) => {
+    const raw = req.body?.payload || req.body?.order || req.body?.data || req.body;
+    const zidOrderId = raw?.id || raw?.order_id || raw?.code;
+    const statusCode = String(
+      raw?.order_status?.code ||
+      raw?.display_status?.code ||
+      raw?.status?.code ||
+      raw?.order_status ||
+      raw?.status ||
+      ''
+    ).toLowerCase();
+
+    if (!zidOrderId) {
+      return res.status(200).json({ success: true, message: 'تم استقبال إشعار التحقق بنجاح' });
+    }
+
+    if (!['cancelled', 'canceled'].includes(statusCode)) {
+      return res.status(200).json({ success: true, message: 'تم تجاهل حالة لا تمثل إلغاءً كاملاً' });
+    }
+
+    logger.info(`[Webhook] Received ZID cancellation for order ${zidOrderId}`);
+    const order = await orderService.handleZidOrderCancellation(String(zidOrderId), req.body);
+
+    return res.status(200).json({
+      success: true,
+      message: order.status === 'CANCEL_REVIEW_REQUIRED'
+        ? 'تم تسجيل الإلغاء للمراجعة اليدوية لأن الطلب خرج للشحن'
+        : 'تم إلغاء الطلب وإنشاء مرتجع دفترة عند الحاجة',
+      orderId: order.id,
+      status: order.status,
+      daftraRefundReceiptNumber: order.daftraRefundReceiptNumber,
+    });
+  });
+
+  /**
    * POST /api/webhooks/zid/order-created
    * استقبال طلب جديد من متجر زد
    */

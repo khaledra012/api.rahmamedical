@@ -21,6 +21,10 @@ export interface OrderAttributes {
   statusMessage: string | null;
   daftraDraftInvoiceId: number | null;
   daftraInvoiceNumber: string | null;
+  daftraRefundReceiptId: number | null;
+  daftraRefundReceiptNumber: string | null;
+  cancellationReason: string | null;
+  cancelledAt: Date | null;
   orderDate: Date | null;
   rawOrderData: object;
   createdAt?: Date;
@@ -42,6 +46,10 @@ export interface OrderCreationAttributes
     | 'statusMessage'
     | 'daftraDraftInvoiceId'
     | 'daftraInvoiceNumber'
+    | 'daftraRefundReceiptId'
+    | 'daftraRefundReceiptNumber'
+    | 'cancellationReason'
+    | 'cancelledAt'
     | 'orderDate'
     | 'createdAt'
     | 'updatedAt'
@@ -66,6 +74,10 @@ export class Order extends Model<OrderAttributes, OrderCreationAttributes> imple
   declare statusMessage: string | null;
   declare daftraDraftInvoiceId: number | null;
   declare daftraInvoiceNumber: string | null;
+  declare daftraRefundReceiptId: number | null;
+  declare daftraRefundReceiptNumber: string | null;
+  declare cancellationReason: string | null;
+  declare cancelledAt: Date | null;
   declare orderDate: Date | null;
   declare rawOrderData: object;
   declare readonly createdAt: Date;
@@ -167,7 +179,11 @@ Order.init(
         'UNMAPPED_PAYMENT',
         'UNMAPPED_PRODUCT',
         'FAILED',
-        'SKIPPED'
+        'SKIPPED',
+        'CANCEL_PENDING',
+        'CANCELLED',
+        'CANCEL_FAILED',
+        'CANCEL_REVIEW_REQUIRED'
       ),
       allowNull: false,
       defaultValue: 'PENDING_INVOICE',
@@ -182,6 +198,22 @@ Order.init(
     },
     daftraInvoiceNumber: {
       type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    daftraRefundReceiptId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    daftraRefundReceiptNumber: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    cancellationReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    cancelledAt: {
+      type: DataTypes.DATE,
       allowNull: true,
     },
     orderDate: {

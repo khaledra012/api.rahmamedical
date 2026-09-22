@@ -6,6 +6,7 @@ const router = Router();
 
 // Public Routes (Webhooks — لا تتطلب مصادقة لاستقبال أحداث المتاجر)
 router.post('/zid/order-created', webhookRateLimit, validateWebhookPayload, OrderWebhookController.handleZidOrderCreated);
+router.post('/zid/order-status-updated', webhookRateLimit, validateWebhookPayload, OrderWebhookController.handleZidOrderStatusUpdated);
 router.post('/trendyol/order-created', webhookRateLimit, validateWebhookPayload, OrderWebhookController.handleTrendyolOrderCreated);
 
 export default router;
