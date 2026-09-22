@@ -6,6 +6,8 @@ import { sanitizeLogPayload } from '../../../shared/helpers/sanitizer';
 import { logger } from '../../../shared/helpers/logger';
 import { OrderService } from '../../orders/services/OrderService';
 import { ProductService } from '../../products/services/ProductService';
+import { productPollerService } from '../../products/services/ProductPollerService';
+import { orderPollerService } from '../../orders/services/OrderPollerService';
 
 export class LogService {
   private orderService: OrderService;
@@ -157,10 +159,6 @@ export class LogService {
       throw new ConflictError('هذه العملية ناجحة بالفعل ولا تتطلب إعادة محاولة.');
     }
 
-    if (!log.entityId) {
-      throw new AppError('لا يمكن إعادة المحاولة: معرّف الكيان (Entity ID) مفقود في السجل', 400);
-    }
-
     // 🔒 Optimistic Lock: Update status to RETRYING and increment count immediately
     log.status = 'RETRYING';
     log.retriesCount += 1;
@@ -171,7 +169,34 @@ export class LogService {
     const startTime = Date.now();
 
     try {
-      if (log.entityType === 'ORDER') {
+      if (!log.entityId) {
+        // فحص دوري مجدول للنظام (Background Poller Retry)
+        if (log.entityType === 'PRODUCT') {
+          const pollRes = await productPollerService.pollProductsNow();
+          if (pollRes.errorsCount === 0) {
+            log.status = 'SUCCESS';
+            log.errorMessage = null;
+            executionMessage = 'تمت إعادة الفحص الدوري لمنتجات ومخزون دفترة بنجاح.';
+          } else {
+            log.status = 'FAILED';
+            log.errorMessage = 'تعذر استكمال الفحص الدوري لمنتجات دفترة أثناء إعادة المحاولة';
+            executionMessage = log.errorMessage;
+          }
+        } else if (log.entityType === 'ORDER') {
+          const pollRes = await orderPollerService.pollOrdersNow();
+          if (pollRes.errorsCount === 0) {
+            log.status = 'SUCCESS';
+            log.errorMessage = null;
+            executionMessage = 'تمت إعادة فحص الطلبات بنجاح.';
+          } else {
+            log.status = 'FAILED';
+            log.errorMessage = 'تعذر استكمال فحص الطلبات أثناء إعادة المحاولة';
+            executionMessage = log.errorMessage;
+          }
+        } else {
+          throw new AppError('لا يمكن إعادة المحاولة: معرّف الكيان (Entity ID) مفقود في السجل', 400);
+        }
+      } else if (log.entityType === 'ORDER') {
         const updatedOrder = await this.orderService.retryOrder(log.entityId);
         if (updatedOrder.status === 'DRAFT_CREATED') {
           log.status = 'SUCCESS';
