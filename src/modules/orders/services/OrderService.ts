@@ -26,6 +26,8 @@ import {
   DaftraRefundReceiptPayload,
 } from '../dtos/order.dtos';
 
+const CANCEL_PENDING_STALE_MS = 5 * 60 * 1000;
+
 export class OrderService {
   private readonly cancellationRequests = new Map<string, Promise<Order>>();
 
@@ -112,7 +114,7 @@ export class OrderService {
     // قد يصل إلغاء زد أثناء مطابقة البنود؛ أعد قراءة السجل قبل أي كتابة مالية خارجية.
     if (typeof (order as any).reload === 'function') {
       await order.reload();
-      if (['CANCEL_PENDING', 'CANCELLED', 'CANCEL_REVIEW_REQUIRED'].includes(order.status)) {
+      if (order.cancelledAt || order.status.startsWith('CANCEL')) {
         return order;
       }
     }
@@ -1006,9 +1008,18 @@ export class OrderService {
   async getOrders(filters: OrderFilterParams) {
     const where: any = {};
     if (filters.status === 'STALLED') {
-      where.status = {
-        [Op.in]: ['FAILED', 'UNMAPPED_PAYMENT', 'UNMAPPED_PRODUCT', 'CANCEL_FAILED', 'CANCEL_REVIEW_REQUIRED'],
-      };
+      const staleCancellationCutoff = new Date(Date.now() - CANCEL_PENDING_STALE_MS);
+      where[Op.or] = [
+        {
+          status: {
+            [Op.in]: ['FAILED', 'UNMAPPED_PAYMENT', 'UNMAPPED_PRODUCT', 'CANCEL_FAILED', 'CANCEL_REVIEW_REQUIRED'],
+          },
+        },
+        {
+          status: 'CANCEL_PENDING',
+          updatedAt: { [Op.lt]: staleCancellationCutoff },
+        },
+      ];
     } else if (filters.status) {
       where.status = filters.status;
     }
@@ -1046,12 +1057,19 @@ export class OrderService {
     const cancelledOrders = await Order.count({ where: { status: 'CANCELLED' } });
     const cancellationFailedOrders = await Order.count({ where: { status: 'CANCEL_FAILED' } });
     const cancellationReviewOrders = await Order.count({ where: { status: 'CANCEL_REVIEW_REQUIRED' } });
+    const staleCancellationPendingOrders = await Order.count({
+      where: {
+        status: 'CANCEL_PENDING',
+        updatedAt: { [Op.lt]: new Date(Date.now() - CANCEL_PENDING_STALE_MS) },
+      },
+    });
     const stalledOrders =
       failedOrders +
       unmappedPaymentOrders +
       unmappedProductOrders +
       cancellationFailedOrders +
-      cancellationReviewOrders;
+      cancellationReviewOrders +
+      staleCancellationPendingOrders;
 
     const recentLogs = await SyncLog.findAll({
       where: { entityType: 'ORDER' },

@@ -7,6 +7,7 @@ import { ProductMapping } from '../../products/models/ProductMapping';
 import { SyncLog } from '../../products/models/SyncLog';
 import { daftraClient } from '../../../shared/integrations/DaftraClient';
 import { zidClient } from '../../../shared/integrations/ZidClient';
+import { Op } from 'sequelize';
 import {
   mockZidOrderWebhook,
   mockTrendyolOrderWebhook,
@@ -179,6 +180,52 @@ describe('OrderService Unit Tests', () => {
       expect(sentPayload.Invoice.draft).toBe(0);
       expect(sentPayload.Invoice.storehouse_id).toBe(3);
       expect(result.treasuryId).toBe(19);
+    });
+
+    it.each([
+      { label: 'a cancellation timestamp', status: 'PROCESSING', cancelledAt: new Date() },
+      { label: 'a cancellation status', status: 'CANCEL_FAILED', cancelledAt: null },
+    ])('should stop before calling Daftra when reload observes $label', async ({ status, cancelledAt }) => {
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(null);
+
+      const createdOrder: any = {
+        id: 6,
+        storeOrderId: 'ZID-10245',
+        storeType: 'ZID',
+        paymentMethod: 'tabby',
+        status: 'PROCESSING',
+        cancelledAt: null,
+        treasuryId: null,
+        save: jest.fn().mockResolvedValue(true),
+        reload: jest.fn().mockImplementation(async () => {
+          createdOrder.status = status;
+          createdOrder.cancelledAt = cancelledAt;
+          createdOrder.treasuryId = null;
+          return createdOrder;
+        }),
+      };
+      (MockOrder.create as jest.Mock).mockResolvedValue(createdOrder);
+      (MockProductMapping.findOne as jest.Mock).mockResolvedValue({ daftraProductId: 1359 });
+      (MockOrderItem.create as jest.Mock).mockResolvedValue({});
+      (MockOrderItem.findAll as jest.Mock).mockResolvedValue([
+        { id: 1, orderId: 6, sku: 'MED-MSK-01', daftraProductId: 1359, matchStatus: 'MATCHED' },
+      ]);
+      (MockPaymentMapping.findOne as jest.Mock).mockResolvedValue({
+        paymentMethodKey: 'tabby',
+        treasuryId: 19,
+        treasuryName: 'tabby',
+        paymentMethodLabel: 'تابي',
+        isActive: true,
+      });
+
+      const result = await service.handleIncomingOrder({
+        ...mockZidOrderWebhook,
+        items: [mockZidOrderWebhook.items[0]],
+      });
+
+      expect(result).toBe(createdOrder);
+      expect(createdOrder.reload).toHaveBeenCalledTimes(1);
+      expect(MockDaftraClient.createInvoice).not.toHaveBeenCalled();
     });
   });
 
@@ -644,6 +691,24 @@ describe('OrderService Unit Tests', () => {
       expect(result.status).toBe('CANCEL_REVIEW_REQUIRED');
       expect(MockDaftraClient.findRefundReceiptByInvoice).not.toHaveBeenCalled();
       expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getOrders() — Stalled cancellation detection', () => {
+    it('includes CANCEL_PENDING orders only after five minutes in the stalled filter', async () => {
+      (MockOrder.findAndCountAll as jest.Mock).mockResolvedValue({ rows: [], count: 0 });
+      const startedAt = Date.now();
+
+      await service.getOrders({ status: 'STALLED' });
+
+      const query = (MockOrder.findAndCountAll as jest.Mock).mock.calls[0][0];
+      const clauses = query.where[Op.or];
+      expect(clauses).toHaveLength(2);
+      expect(clauses[1].status).toBe('CANCEL_PENDING');
+      const cutoff = clauses[1].updatedAt[Op.lt] as Date;
+      expect(cutoff).toBeInstanceOf(Date);
+      expect(cutoff.getTime()).toBeGreaterThanOrEqual(startedAt - (5 * 60 * 1000) - 1000);
+      expect(cutoff.getTime()).toBeLessThanOrEqual(Date.now() - (5 * 60 * 1000));
     });
   });
 });
