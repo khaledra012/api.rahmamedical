@@ -169,6 +169,18 @@ export class OrderPollerService {
             : [];
           const zidShippingItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'shipping');
           const zidCodItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'zid_cod' || entry.code === 'cod');
+          const zidCouponItem = detailedPaymentInvoice.find((entry: any) => entry.code === 'coupon' || entry.code === 'discount');
+
+          const rawCouponVal =
+            zidCouponItem?.value ||
+            detailedOrder.coupon?.discount ||
+            (Array.isArray(detailedOrder.coupons) && detailedOrder.coupons[0]?.discount) ||
+            detailedOrder.discount ||
+            detailedOrder.discount_amount ||
+            detailedOrder.total_discount ||
+            0;
+
+          const discountAmount = Math.abs(parseFloat(String(rawCouponVal || 0)));
 
           const addressInfo = extractAddressDetails(detailedOrder.shipping, detailedOrder.shipping_address);
 
@@ -201,7 +213,7 @@ export class OrderPollerService {
                 detailedOrder.shipping?.cost ||
                 0
               ) + parseFloat(zidCodItem?.value || detailedOrder.cod_cost || detailedOrder.cod_fee || 0),
-            discountAmount: parseFloat(detailedOrder.discount || detailedOrder.discount_amount || detailedOrder.total_discount || 0),
+            discountAmount,
             taxAmount: parseFloat(detailedOrder.tax_amount || detailedOrder.tax || 0),
             totalAmount: parseFloat(detailedOrder.total || detailedOrder.total_amount || detailedOrder.order_total || 0),
             orderDate: detailedOrder.created_at || detailedOrder.order_date || detailedOrder.date || new Date().toISOString(),

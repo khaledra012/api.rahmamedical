@@ -72,6 +72,21 @@ export class OrderWebhookController {
 
     const addressInfo = extractAddressDetails(raw.shipping, raw.shipping_address);
 
+    const zidCouponItem = Array.isArray(raw.payment?.invoice)
+      ? raw.payment.invoice.find((entry: any) => entry.code === 'coupon' || entry.code === 'discount')
+      : null;
+
+    const rawCouponVal =
+      zidCouponItem?.value ||
+      raw.coupon?.discount ||
+      (Array.isArray(raw.coupons) && raw.coupons[0]?.discount) ||
+      raw.discount ||
+      raw.discount_amount ||
+      raw.total_discount ||
+      0;
+
+    const discountAmount = Math.abs(parseFloat(String(rawCouponVal || 0)));
+
     const payload: IncomingOrderPayload = {
       storeOrderId: `ZID-${raw.id || raw.order_id || raw.code || Date.now()}`,
       storeType: 'ZID',
@@ -103,7 +118,7 @@ export class OrderWebhookController {
           raw.shipping_cost_string ||
           0
         ) + parseFloat(zidCodItem?.value || raw.cod_cost || raw.cod_fee || 0),
-      discountAmount: parseFloat(raw.discount || raw.discount_amount || raw.total_discount || 0),
+      discountAmount,
       taxAmount: parseFloat(zidVatItem?.value || raw.tax_amount || raw.tax || 0),
       totalAmount: parseFloat(zidTotalItem?.value || raw.total || raw.total_amount || raw.order_total || 0),
       orderDate: raw.created_at || raw.order_date || raw.date || new Date().toISOString(),
