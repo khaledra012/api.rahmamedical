@@ -123,6 +123,7 @@ export class OrderService {
       const paymentRecorded = await this.recordInvoicePayment(invoiceResult.invoiceId, order, paymentMapping);
 
       order.status = 'DRAFT_CREATED';
+      order.treasuryId = paymentMapping.treasuryId;
       order.daftraDraftInvoiceId = invoiceResult.invoiceId;
       order.daftraInvoiceNumber = invoiceResult.invoiceNumber;
       order.statusMessage = paymentRecorded
