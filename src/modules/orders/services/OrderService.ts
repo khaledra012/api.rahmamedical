@@ -1031,7 +1031,10 @@ export class OrderService {
 
     const { rows, count } = await Order.findAndCountAll({
       where,
-      order: [['createdAt', 'DESC']],
+      order: [
+        ['orderDate', 'DESC'],
+        ['id', 'DESC'],
+      ],
       limit,
       offset,
     });

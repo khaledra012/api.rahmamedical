@@ -22,7 +22,7 @@ const startServer = async (): Promise<void> => {
 
     // Background Pollers: تم إيقاف سحب طلبات زد دورياً والاعتماد حصرياً على الويب هوك المباشر
     // orderPollerService.startPolling(5);
-    productPollerService.startPolling(5); // فحص وتحديث منتجات دفترة دورياً كل 5 دقائق
+    productPollerService.startPolling(5); // فحص وتحديث منتجات ومخزون دفترة دورياً كل 5 دقائق
 
 
     // Start Express Server
