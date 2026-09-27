@@ -139,6 +139,24 @@ export class OrderPollerService {
             }
           }
 
+          const zidStatus = String(
+            detailedOrder.order_status?.code || detailedOrder.display_status?.code || detailedOrder.status?.code || ''
+          ).toLowerCase();
+
+          if (['cancelled', 'canceled'].includes(zidStatus)) {
+            logger.info(`[OrderPoller] Order #${detailedOrder.id} is marked cancelled in Zid. Processing cancellation directly.`);
+            await orderService.handleZidOrderCancellation(
+              String(detailedOrder.id || detailedOrder.order_id || detailedOrder.code),
+              detailedOrder
+            );
+            processedCount++;
+            const validEventDate = new Date(detailedOrder.created_at || detailedOrder.order_date || detailedOrder.date || Date.now());
+            if (!isNaN(validEventDate.getTime())) {
+              lastSuccessfulEventTime = validEventDate;
+            }
+            continue;
+          }
+
           const rawItems = detailedOrder.products || detailedOrder.items || detailedOrder.order_items || [];
           const items = rawItems.map((item: any) => {
             const p = item.product || {};

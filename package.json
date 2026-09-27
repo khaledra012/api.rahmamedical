@@ -8,6 +8,7 @@
     "build": "tsc && tsc-alias",
     "start": "node dist/server.js",
     "db:migrate": "node dist/scripts/migrate.js",
+    "orders:sync": "node dist/scripts/syncBacklog.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
