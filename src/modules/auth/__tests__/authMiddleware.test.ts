@@ -17,40 +17,41 @@ describe('authMiddleware Unit Tests', () => {
     jest.clearAllMocks();
   });
 
-  it('should call next() and attach user to req when valid Bearer token is provided', () => {
-    const mockUser = { id: 1, email: 'admin@daftra-sync.com', role: 'admin' };
-    jest.spyOn(authService, 'verifyToken').mockReturnValue(mockUser);
+  it('should call next() and attach the current database user when valid Bearer token is provided', async () => {
+    const tokenUser = { id: 1, email: 'old@daftra-sync.com', username: 'admin', role: 'admin' as const, mustChangePassword: false };
+    const currentUser = { id: 1, name: 'مدير النظام', email: 'admin@daftra-sync.com', username: 'admin', role: 'admin' as const, mustChangePassword: false, isActive: true };
+    jest.spyOn(authService, 'verifyToken').mockReturnValue(tokenUser);
+    jest.spyOn(authService, 'getCurrentUser').mockResolvedValue(currentUser as any);
 
     mockReq.headers = {
       authorization: 'Bearer valid_jwt_token_123',
     };
 
-    authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
+    await authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
 
     expect(authService.verifyToken).toHaveBeenCalledWith('valid_jwt_token_123');
-    expect(mockReq.user).toEqual(mockUser);
+    expect(authService.getCurrentUser).toHaveBeenCalledWith(1);
+    expect(mockReq.user).toEqual(expect.objectContaining({ email: 'admin@daftra-sync.com', role: 'admin' }));
     expect(mockNext).toHaveBeenCalledWith();
   });
 
-  it('should throw UnauthorizedError when Authorization header is missing', () => {
+  it('should pass UnauthorizedError to next when Authorization header is missing', async () => {
     mockReq.headers = {};
 
-    expect(() => {
-      authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
-    }).toThrow(UnauthorizedError);
+    await authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
+    expect(mockNext.mock.calls[0][0]).toBeInstanceOf(UnauthorizedError);
   });
 
-  it('should throw UnauthorizedError when Authorization header does not start with Bearer', () => {
+  it('should pass UnauthorizedError to next when Authorization header does not start with Bearer', async () => {
     mockReq.headers = {
       authorization: 'Basic dXNlcjpwYXNz',
     };
 
-    expect(() => {
-      authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
-    }).toThrow(UnauthorizedError);
+    await authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
+    expect(mockNext.mock.calls[0][0]).toBeInstanceOf(UnauthorizedError);
   });
 
-  it('should throw UnauthorizedError when token is malformed or invalid', () => {
+  it('should pass UnauthorizedError to next when token is malformed or invalid', async () => {
     jest.spyOn(authService, 'verifyToken').mockImplementation(() => {
       throw new UnauthorizedError('رمز التحقق غير صالح أو تالف');
     });
@@ -59,8 +60,7 @@ describe('authMiddleware Unit Tests', () => {
       authorization: 'Bearer invalid_token',
     };
 
-    expect(() => {
-      authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
-    }).toThrow(UnauthorizedError);
+    await authMiddleware(mockReq as Request, mockRes as Response, mockNext as NextFunction);
+    expect(mockNext.mock.calls[0][0]).toBeInstanceOf(UnauthorizedError);
   });
 });

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authController } from '../controllers/AuthController';
 import { loginValidationRules } from '../validators/auth.validators';
 import { validateRequest, authMiddleware, asyncHandler, authRateLimiter } from '../../../shared/middlewares';
+import { auditAction } from '../../../shared/middlewares/auditMiddleware';
 
 const router = Router();
 
@@ -12,6 +13,17 @@ router.post('/login', authRateLimiter, loginValidationRules, validateRequest, as
 router.get('/me', authMiddleware, asyncHandler(authController.getMe));
 
 // Protected route: Change password
-router.post('/change-password', authMiddleware, asyncHandler(authController.changePassword));
+router.post(
+  '/change-password',
+  authMiddleware,
+  auditAction('AUTH_CHANGE_PASSWORD', { entityType: 'USER', useCurrentUserId: true }),
+  asyncHandler(authController.changePassword)
+);
+router.post(
+  '/logout',
+  authMiddleware,
+  auditAction('AUTH_LOGOUT', { entityType: 'USER', useCurrentUserId: true }),
+  asyncHandler(authController.logout)
+);
 
 export const authRoutes = router;

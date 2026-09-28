@@ -1,12 +1,15 @@
 import { body } from 'express-validator';
 
 export const loginValidationRules = [
-  body('email')
-    .notEmpty()
-    .withMessage('البريد الإلكتروني مطلوب')
-    .isEmail()
-    .withMessage('يرجى إدخال بريد إلكتروني صالح')
-    .normalizeEmail(),
+  body('identifier')
+    .custom((value, { req }) => {
+      const identifier = String(value || req.body?.email || '').trim();
+      if (identifier.length < 3 || identifier.length > 150) {
+        throw new Error('البريد الإلكتروني أو اسم المستخدم مطلوب');
+      }
+      req.body.identifier = identifier;
+      return true;
+    }),
   body('password')
     .notEmpty()
     .withMessage('كلمة المرور مطلوبة')

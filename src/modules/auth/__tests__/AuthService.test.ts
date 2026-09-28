@@ -3,6 +3,7 @@ import { User } from '../models/User';
 import { UnauthorizedError, ForbiddenError, NotFoundError } from '../../../shared/errors';
 import jwt from 'jsonwebtoken';
 import { env } from '../../../config/env';
+import { Op } from 'sequelize';
 
 jest.mock('../models/User');
 
@@ -19,9 +20,11 @@ describe('AuthService Unit Tests', () => {
       const mockUser = {
         id: 1,
         name: 'مدير النظام',
+        username: 'admin',
         email: 'admin@daftra-sync.com',
         role: 'admin',
         isActive: true,
+        mustChangePassword: false,
         comparePassword: jest.fn().mockResolvedValue(true),
         save: jest.fn().mockResolvedValue(true),
       };
@@ -29,12 +32,12 @@ describe('AuthService Unit Tests', () => {
       (User.findOne as jest.Mock).mockResolvedValue(mockUser);
 
       const result = await authService.login({
-        email: 'admin@daftra-sync.com',
+        identifier: 'admin@daftra-sync.com',
         password: 'Admin@2026',
       });
 
       expect(User.findOne).toHaveBeenCalledWith({
-        where: { email: 'admin@daftra-sync.com' },
+        where: { [Op.or]: [{ email: 'admin@daftra-sync.com' }, { username: 'admin@daftra-sync.com' }] },
       });
       expect(mockUser.comparePassword).toHaveBeenCalledWith('Admin@2026');
       expect(mockUser.save).toHaveBeenCalled();
@@ -42,8 +45,10 @@ describe('AuthService Unit Tests', () => {
       expect(result.user).toEqual({
         id: 1,
         name: 'مدير النظام',
+        username: 'admin',
         email: 'admin@daftra-sync.com',
         role: 'admin',
+        mustChangePassword: false,
       });
     });
 
@@ -52,7 +57,7 @@ describe('AuthService Unit Tests', () => {
 
       await expect(
         authService.login({
-          email: 'unknown@daftra-sync.com',
+          identifier: 'unknown@daftra-sync.com',
           password: 'Password123',
         })
       ).rejects.toThrow(UnauthorizedError);
@@ -69,7 +74,7 @@ describe('AuthService Unit Tests', () => {
 
       await expect(
         authService.login({
-          email: 'blocked@daftra-sync.com',
+          identifier: 'blocked@daftra-sync.com',
           password: 'Password123',
         })
       ).rejects.toThrow(ForbiddenError);
@@ -87,7 +92,7 @@ describe('AuthService Unit Tests', () => {
 
       await expect(
         authService.login({
-          email: 'admin@daftra-sync.com',
+          identifier: 'admin@daftra-sync.com',
           password: 'WrongPassword',
         })
       ).rejects.toThrow(UnauthorizedError);
@@ -99,7 +104,9 @@ describe('AuthService Unit Tests', () => {
       const payload = {
         id: 1,
         email: 'admin@daftra-sync.com',
+        username: 'admin',
         role: 'admin',
+        mustChangePassword: false,
       };
       const token = jwt.sign(payload, env.jwt.secret);
 
@@ -121,9 +128,11 @@ describe('AuthService Unit Tests', () => {
       const mockUser = {
         id: 1,
         name: 'مدير النظام',
+        username: 'admin',
         email: 'admin@daftra-sync.com',
         role: 'admin',
         isActive: true,
+        mustChangePassword: false,
       };
 
       (User.findByPk as jest.Mock).mockResolvedValue(mockUser);
@@ -144,6 +153,7 @@ describe('AuthService Unit Tests', () => {
       const mockUser: any = {
         id: 1,
         password: 'old_hashed_password',
+        mustChangePassword: true,
         comparePassword: jest.fn().mockResolvedValue(true),
         save: jest.fn().mockResolvedValue(true),
       };
@@ -157,6 +167,7 @@ describe('AuthService Unit Tests', () => {
 
       expect(mockUser.comparePassword).toHaveBeenCalledWith('CurrentPassword123');
       expect(mockUser.password).toBe('NewSecurePassword456');
+      expect(mockUser.mustChangePassword).toBe(false);
       expect(mockUser.save).toHaveBeenCalled();
     });
 

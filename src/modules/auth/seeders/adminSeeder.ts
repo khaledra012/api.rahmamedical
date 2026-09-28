@@ -9,6 +9,7 @@ export const seedAdminUser = async (): Promise<void> => {
     if (!adminUser) {
       await User.create({
         name: 'مدير النظام',
+        username: 'admin',
         email: adminEmail,
         password: 'Admin@2026',
         role: 'admin',
@@ -19,6 +20,10 @@ export const seedAdminUser = async (): Promise<void> => {
       logger.info('   Email:    admin@daftra-sync.com');
       logger.info('   Password: Admin@2026');
     } else {
+      if (!adminUser.username) {
+        adminUser.username = 'admin';
+        await adminUser.save();
+      }
       logger.info('🔑 Admin account already exists. Credentials preserved.');
     }
   } catch (error) {

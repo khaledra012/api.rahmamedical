@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { Op } from 'sequelize';
 import { User } from '../models/User';
 import { LoginRequestDto, LoginResponseDto, AuthenticatedUser, ChangePasswordDto } from '../dtos/auth.dtos';
 import { UnauthorizedError, ForbiddenError, NotFoundError } from '../../../shared/errors';
@@ -9,12 +10,16 @@ export class AuthService {
    * Authenticate user with email and password
    */
   public async login(dto: LoginRequestDto): Promise<LoginResponseDto> {
-    const email = dto.email.trim().toLowerCase();
+    const identifier = dto.identifier.trim().toLowerCase();
 
-    // 1. Find user by email
-    const user = await User.findOne({ where: { email } });
+    // 1. Find user by email or username
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [{ email: identifier }, { username: identifier }],
+      },
+    });
     if (!user) {
-      throw new UnauthorizedError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      throw new UnauthorizedError('اسم المستخدم أو البريد الإلكتروني أو كلمة المرور غير صحيحة');
     }
 
     // 2. Check if account is active (handle both camelCase and snake_case safely)
@@ -26,7 +31,7 @@ export class AuthService {
     // 3. Verify password
     const isPasswordValid = await user.comparePassword(dto.password);
     if (!isPasswordValid) {
-      throw new UnauthorizedError('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      throw new UnauthorizedError('اسم المستخدم أو البريد الإلكتروني أو كلمة المرور غير صحيحة');
     }
 
     // 4. Update last login timestamp
@@ -37,8 +42,10 @@ export class AuthService {
     const payload: AuthenticatedUser = {
       id: user.id,
       email: user.email,
+      username: user.username,
       name: user.name,
       role: user.role,
+      mustChangePassword: user.mustChangePassword,
     };
 
     const token = jwt.sign(payload, env.jwt.secret, {
@@ -49,8 +56,10 @@ export class AuthService {
       user: {
         id: user.id,
         name: user.name,
+        username: user.username,
         email: user.email,
         role: user.role,
+        mustChangePassword: user.mustChangePassword,
       },
       token,
       expiresIn: env.jwt.expiresIn,
@@ -82,7 +91,7 @@ export class AuthService {
     }
     const isUserActive = user.isActive ?? (user as any).is_active ?? true;
     if (!isUserActive) {
-      throw new NotFoundError('المستخدم غير نشط أو تم تعطيله');
+      throw new UnauthorizedError('تم تعطيل هذا الحساب. يرجى التواصل مع الإدارة');
     }
     return user;
   }
@@ -106,6 +115,7 @@ export class AuthService {
     }
 
     user.password = dto.newPassword.trim();
+    user.mustChangePassword = false;
     await user.save();
   }
 }

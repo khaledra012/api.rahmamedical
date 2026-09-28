@@ -11,6 +11,8 @@ import { productRoutes } from './modules/products/routes/product.routes';
 import orderRoutes from './modules/orders/routes/order.routes';
 import orderWebhookRoutes from './modules/orders/routes/order-webhook.routes';
 import logRoutes from './modules/logs/routes/log.routes';
+import auditRoutes from './modules/audit/routes/audit.routes';
+import userRoutes from './modules/users/routes/user.routes';
 import { apiRateLimiter } from './shared/middlewares/rateLimiter';
 
 export const createApp = (): Application => {
@@ -77,6 +79,8 @@ export const createApp = (): Application => {
   app.use('/api/products', authMiddleware, productRoutes);
   app.use('/api/orders', orderRoutes);
   app.use('/api/logs', logRoutes);
+  app.use('/api/audit-logs', auditRoutes);
+  app.use('/api/users', userRoutes);
 
   // Handle 404 - Not Found for unhandled routes
   app.use((req: Request, res: Response, next) => {

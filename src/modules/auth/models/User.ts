@@ -5,24 +5,28 @@ import { sequelize } from '../../../config/database';
 export interface UserAttributes {
   id: number;
   name: string;
+  username: string | null;
   email: string;
   password?: string;
-  role: 'admin' | 'operator';
+  role: 'admin' | 'operator' | 'viewer';
   isActive: boolean;
+  mustChangePassword: boolean;
   lastLogin?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-export interface UserCreationAttributes extends Optional<UserAttributes, 'id' | 'isActive' | 'lastLogin' | 'createdAt' | 'updatedAt'> {}
+export interface UserCreationAttributes extends Optional<UserAttributes, 'id' | 'username' | 'isActive' | 'mustChangePassword' | 'lastLogin' | 'createdAt' | 'updatedAt'> {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   declare id: number;
   declare name: string;
+  declare username: string | null;
   declare email: string;
   declare password: string;
-  declare role: 'admin' | 'operator';
+  declare role: 'admin' | 'operator' | 'viewer';
   declare isActive: boolean;
+  declare mustChangePassword: boolean;
   declare lastLogin: Date | null;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
@@ -55,6 +59,13 @@ User.init(
       type: DataTypes.STRING(100),
       allowNull: false,
     },
+    username: {
+      type: DataTypes.STRING(80),
+      allowNull: true,
+      set(val: string | null) {
+        this.setDataValue('username', val ? val.trim().toLowerCase() : null);
+      },
+    },
     email: {
       type: DataTypes.STRING(150),
       allowNull: false,
@@ -71,7 +82,7 @@ User.init(
       allowNull: false,
     },
     role: {
-      type: DataTypes.ENUM('admin', 'operator'),
+      type: DataTypes.ENUM('admin', 'operator', 'viewer'),
       allowNull: false,
       defaultValue: 'admin',
     },
@@ -79,6 +90,11 @@ User.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
+    },
+    mustChangePassword: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     lastLogin: {
       type: DataTypes.DATE,

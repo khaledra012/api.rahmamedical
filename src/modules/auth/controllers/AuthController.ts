@@ -3,6 +3,7 @@ import { authService } from '../services/AuthService';
 import { sendSuccess } from '../../../shared/helpers/responseFormatter';
 import { UnauthorizedError } from '../../../shared/errors';
 import { AuthenticatedUser } from '../dtos/auth.dtos';
+import { auditService } from '../../audit/services/AuditService';
 
 export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
@@ -13,8 +14,19 @@ export class AuthController {
    * POST /api/auth/login
    */
   public login = async (req: Request, res: Response): Promise<Response> => {
-    const { email, password } = req.body;
-    const result = await authService.login({ email, password });
+    const identifier = req.body.identifier || req.body.email;
+    const { password } = req.body;
+    const result = await authService.login({ identifier, password });
+    await auditService.record({
+      user: result.user,
+      action: 'AUTH_LOGIN',
+      method: req.method,
+      path: req.originalUrl,
+      status: 'SUCCESS',
+      statusCode: 200,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
     return sendSuccess(res, result, 'تم تسجيل الدخول بنجاح', 200);
   };
 
@@ -41,6 +53,10 @@ export class AuthController {
     const { currentPassword, newPassword } = req.body;
     await authService.changePassword(req.user.id, { currentPassword, newPassword });
     return sendSuccess(res, null, 'تم تغيير كلمة المرور بنجاح', 200);
+  };
+
+  public logout = async (_req: AuthenticatedRequest, res: Response): Promise<Response> => {
+    return sendSuccess(res, null, 'تم تسجيل الخروج بنجاح', 200);
   };
 }
 
