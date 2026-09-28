@@ -15,6 +15,7 @@ export interface DaftraWebhookProductPayload {
   is_taxable?: boolean | number;
   tax_percentage?: number | string;
   category_name?: string;
+  status?: number | string;
   [key: string]: any;
 }
 

@@ -25,6 +25,8 @@ export interface ProductAttributes {
   trendyolBrandId: number | null;
   images: string[] | null;
   seoKeywords: string | null;
+  daftraStatus: number;
+  zidStatusBeforeDaftraBlock: PublishStatus | null;
   publishStatus: PublishStatus;
   publishError: string | null;
   trendyolStatus: PublishStatus;
@@ -55,6 +57,8 @@ export interface ProductCreationAttributes
     | 'trendyolBrandId'
     | 'images'
     | 'seoKeywords'
+    | 'daftraStatus'
+    | 'zidStatusBeforeDaftraBlock'
     | 'publishStatus'
     | 'publishError'
     | 'trendyolStatus'
@@ -86,6 +90,8 @@ export class Product extends Model<ProductAttributes, ProductCreationAttributes>
   declare trendyolBrandId: number | null;
   declare images: string[] | null;
   declare seoKeywords: string | null;
+  declare daftraStatus: number;
+  declare zidStatusBeforeDaftraBlock: PublishStatus | null;
   declare publishStatus: PublishStatus;
   declare publishError: string | null;
   declare trendyolStatus: PublishStatus;
@@ -210,6 +216,15 @@ Product.init(
     },
     seoKeywords: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    daftraStatus: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    zidStatusBeforeDaftraBlock: {
+      type: DataTypes.STRING(30),
       allowNull: true,
     },
     publishStatus: {

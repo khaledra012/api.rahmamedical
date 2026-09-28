@@ -40,6 +40,8 @@ export class ProductService {
     const taxPercentage = payload.tax_percentage !== undefined ? parseFloat(payload.tax_percentage as any) : null;
 
     let product = await Product.findOne({ where: { daftraProductId } });
+    const incomingDaftraStatus = this.parseDaftraStatus(payload.status, product?.daftraStatus ?? 0);
+    const isBlockedInDaftra = this.isDaftraBlocked(incomingDaftraStatus);
 
     if (product) {
       product.nameAr = nameAr;
@@ -55,17 +57,63 @@ export class ProductService {
       product.isTaxable = isTaxable;
       product.taxPercentage = taxPercentage;
       product.daftraCategory = payload.category_name || product.daftraCategory;
+      product.daftraStatus = incomingDaftraStatus;
       product.rawDaftraData = payload;
+
+      if (isBlockedInDaftra) {
+        if (!product.zidStatusBeforeDaftraBlock) {
+          product.zidStatusBeforeDaftraBlock = product.publishStatus;
+        }
+        product.publishStatus = 'PAUSED';
+      }
 
       await product.save();
       logger.info(`[ProductService] Updated existing Daftra product #${daftraProductId} (${sku})`);
 
-      const mapping = await ProductMapping.findOne({ where: { productId: product.id } });
+      let mapping = await ProductMapping.findOne({ where: { productId: product.id } });
       const currentProductId = product.id;
+
+      if (isBlockedInDaftra) {
+        if (!mapping?.zidProductId) {
+          mapping = await this.findAndLinkExistingZidProduct(product, mapping);
+        }
+        if (mapping?.zidProductId) {
+          await this.syncDaftraAvailabilityToZid(product, mapping.zidProductId, false);
+        }
+        return product;
+      }
+
+      let restoredPublishedProduct = false;
+      if (product.zidStatusBeforeDaftraBlock) {
+        const statusBeforeBlock = product.zidStatusBeforeDaftraBlock;
+        if (statusBeforeBlock === 'PUBLISHED') {
+          if (!mapping?.zidProductId) {
+            mapping = await this.findAndLinkExistingZidProduct(product, mapping);
+          }
+          if (!mapping?.zidProductId) {
+            product.publishStatus = 'PAUSED';
+            product.publishError = 'تعذر إعادة نشر المنتج تلقائياً لعدم وجود ربط بمنتج زد';
+            await product.save();
+            return product;
+          }
+
+          await this.syncDaftraAvailabilityToZid(product, mapping.zidProductId, true);
+          product.publishStatus = 'PUBLISHED';
+          restoredPublishedProduct = true;
+        } else {
+          product.publishStatus = statusBeforeBlock === 'PUBLISHING' ? 'PENDING_REVIEW' : statusBeforeBlock;
+        }
+        product.zidStatusBeforeDaftraBlock = null;
+        product.publishError = null;
+        await product.save();
+      }
+
       if (mapping && mapping.zidProductId && mapping.syncStatus === 'SYNCED') {
-        this.syncUpdateToZid(product, mapping.zidProductId).catch((err) => {
-          logger.error(`[ProductService] Auto-sync update to Zid failed for #${currentProductId}:`, err);
-        });
+        if (!restoredPublishedProduct) {
+          this.syncUpdateToZid(product, mapping.zidProductId).catch((err) => {
+            logger.error(`[ProductService] Auto-sync update to Zid failed for #${currentProductId}:`, err);
+          });
+        }
       } else if (mapping && !mapping.zidProductId && product.sku && !product.sku.startsWith('SKU-')) {
         // فحص ذكي للأصناف المسجلة مسبقاً في الداشبورد وغير المربوطة
         this.tryAutoLinkToZid(product, mapping).catch((err) => {
@@ -109,7 +157,13 @@ export class ProductService {
         isTaxable,
         taxPercentage,
         daftraCategory: payload.category_name || null,
-        publishStatus: autoLinkedZidId ? 'PUBLISHED' : 'PENDING_REVIEW',
+        daftraStatus: incomingDaftraStatus,
+        zidStatusBeforeDaftraBlock: isBlockedInDaftra
+          ? autoLinkedZidId
+            ? 'PUBLISHED'
+            : 'PENDING_REVIEW'
+          : null,
+        publishStatus: isBlockedInDaftra ? 'PAUSED' : autoLinkedZidId ? 'PUBLISHED' : 'PENDING_REVIEW',
         trendyolStatus: 'PENDING_REVIEW',
         rawDaftraData: payload,
       });
@@ -125,7 +179,12 @@ export class ProductService {
         lastSyncedAt: autoLinkedZidId ? new Date() : null,
       });
 
-      if (autoLinkedZidId) {
+      if (autoLinkedZidId && isBlockedInDaftra) {
+        await this.syncDaftraAvailabilityToZid(product, autoLinkedZidId, false);
+        logger.info(
+          `[ProductService] Smart Auto-Link: Daftra product #${daftraProductId} (${sku}) is unavailable and was hidden in Zid ${autoLinkedZidId}`
+        );
+      } else if (autoLinkedZidId) {
         // تحديث الرصيد والسعر على متجر زد فوراً
         const targetZidId = autoLinkedZidId;
         const currentProductId = product.id;
@@ -184,6 +243,10 @@ export class ProductService {
     const product = await Product.findByPk(productId);
     if (!product) {
       throw new NotFoundError('المنتج غير موجود');
+    }
+
+    if (this.isDaftraBlocked(product.daftraStatus)) {
+      throw new ConflictError('المنتج غير نشط أو موقوف في دفترة ولا يمكن نشره إلى زد');
     }
 
     if (product.publishStatus === 'PUBLISHING') {
@@ -485,6 +548,10 @@ export class ProductService {
       throw new NotFoundError('المنتج غير موجود');
     }
 
+    if (this.isDaftraBlocked(product.daftraStatus)) {
+      throw new ConflictError('المنتج غير نشط أو موقوف في دفترة ولا يمكن تفعيله يدوياً');
+    }
+
     if (product.publishStatus === 'PAUSED') {
       product.publishStatus = 'PUBLISHED';
     } else if (product.publishStatus === 'PUBLISHED') {
@@ -500,14 +567,65 @@ export class ProductService {
   /**
    * 8. Sync updates to Zid & Trendyol
    */
-  private async syncUpdateToZid(product: Product, zidProductId: string): Promise<void> {
+  private async syncUpdateToZid(
+    product: Product,
+    zidProductId: string,
+    isPublished?: boolean
+  ): Promise<void> {
     const payload: Partial<ZidProductPayload> = {
       name: { ar: product.nameAr, en: product.nameEn || product.nameAr },
       price: Number(product.price),
       cost: product.costPrice ? Number(product.costPrice) : null,
       quantity: product.stockQuantity,
+      ...(isPublished !== undefined ? { is_published: isPublished } : {}),
     };
     await zidClient.updateProduct(zidProductId, payload);
+  }
+
+  private async syncDaftraAvailabilityToZid(
+    product: Product,
+    zidProductId: string,
+    isPublished: boolean
+  ): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      await this.syncUpdateToZid(product, zidProductId, isPublished);
+      product.publishError = null;
+      await product.save();
+
+      await SyncLog.create({
+        entityType: 'PRODUCT',
+        entityId: product.id,
+        action: 'UPDATE',
+        direction: 'DAFTRA_TO_ZID',
+        source: 'POLLER',
+        requestUrl: `https://api.zid.sa/v1/products/${zidProductId}`,
+        requestMethod: 'PATCH',
+        requestPayload: { is_published: isPublished },
+        status: 'SUCCESS',
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (error: any) {
+      const action = isPublished ? 'إعادة نشر' : 'إيقاف';
+      product.publishError = `فشل ${action} المنتج في زد طبقاً لحالته في دفترة: ${error.message}`;
+      await product.save();
+
+      await SyncLog.create({
+        entityType: 'PRODUCT',
+        entityId: product.id,
+        action: 'UPDATE',
+        direction: 'DAFTRA_TO_ZID',
+        source: 'POLLER',
+        requestUrl: `https://api.zid.sa/v1/products/${zidProductId}`,
+        requestMethod: 'PATCH',
+        requestPayload: { is_published: isPublished },
+        responseStatus: error.statusCode || 500,
+        errorMessage: product.publishError,
+        status: 'FAILED',
+        durationMs: Date.now() - startedAt,
+      });
+      throw error;
+    }
   }
 
   private async syncUpdateToTrendyol(product: Product): Promise<void> {
@@ -523,10 +641,39 @@ export class ProductService {
     ]);
   }
 
+  private async findAndLinkExistingZidProduct(
+    product: Product,
+    mapping: ProductMapping | null
+  ): Promise<ProductMapping | null> {
+    if (!product.sku || product.sku.startsWith('SKU-')) return mapping;
+
+    const linkedMapping =
+      mapping ||
+      (await ProductMapping.create({
+        productId: product.id,
+        daftraProductId: product.daftraProductId,
+        sku: product.sku,
+        barcode: product.barcode,
+        syncStatus: 'PENDING',
+        trendyolStatus: 'PENDING',
+      }));
+
+    const existingZidProduct = await zidClient.getProductBySku(product.sku);
+    if (!existingZidProduct?.id) return linkedMapping;
+
+    linkedMapping.zidProductId = String(existingZidProduct.id);
+    linkedMapping.syncStatus = 'SYNCED';
+    linkedMapping.lastSyncedAt = new Date();
+    linkedMapping.lastError = null;
+    await linkedMapping.save();
+    return linkedMapping;
+  }
+
   /**
    * محاولة ربط صنف مسجل مسبقاً في الداشبورد تلقائياً بمتجر زد إذا وُجد له كود مطابق
    */
   public async tryAutoLinkToZid(product: Product, mapping: ProductMapping): Promise<boolean> {
+    if (this.isDaftraBlocked(product.daftraStatus)) return false;
     if (!product.sku || product.sku.startsWith('SKU-')) return false;
 
     try {
@@ -582,6 +729,7 @@ export class ProductService {
     const pendingProducts = await Product.findAll({
       where: {
         publishStatus: { [Op.in]: ['PENDING_REVIEW', 'FAILED'] },
+        daftraStatus: { [Op.notIn]: [1, 2] },
       },
     });
 
@@ -705,6 +853,17 @@ export class ProductService {
 
     const mapping = await ProductMapping.findOne({ where: { productId: product.id } });
     return { product, mapping };
+  }
+
+  private parseDaftraStatus(value: unknown, fallback: number): number {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number.parseInt(String(value), 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  private isDaftraBlocked(status: unknown): boolean {
+    const parsed = Number.parseInt(String(status ?? 0), 10);
+    return parsed === 1 || parsed === 2;
   }
 
   /**
