@@ -71,6 +71,10 @@ const migrate = async (): Promise<void> => {
       await addOrderColumn('cod_settlement_started_at', { type: DataTypes.DATE, allowNull: true });
       await addOrderColumn('cod_settled_at', { type: DataTypes.DATE, allowNull: true });
       await addOrderColumn('daftra_payment_id', { type: DataTypes.STRING(100), allowNull: true });
+      await addOrderColumn('daftra_refund_receipt_id', { type: DataTypes.INTEGER, allowNull: true });
+      await addOrderColumn('daftra_refund_receipt_number', { type: DataTypes.STRING(100), allowNull: true });
+      await addOrderColumn('cancellation_reason', { type: DataTypes.TEXT, allowNull: true });
+      await addOrderColumn('cancelled_at', { type: DataTypes.DATE, allowNull: true });
     }
 
     // Creates new tables on first deployment without repeatedly altering existing tables.
