@@ -788,14 +788,22 @@ export class OrderService {
   }
 
   private extractShippingStatus(details: any): string {
-    return String(
-      details?.shipping?.method?.order_shipping_status ||
-        details?.shipping?.method?.tracking?.status ||
-        details?.display_status?.name ||
-        details?.order_status?.name ||
-        this.extractZidOrderStatus(details) ||
-        ''
-    ).trim();
+    if (details?.delivered_at) return 'تم التوصيل';
+
+    const candidates = [
+      details?.shipping?.method?.order_shipping_status,
+      details?.shipping?.method?.tracking?.status,
+      details?.display_status?.name,
+      details?.order_status?.name,
+      this.extractZidOrderStatus(details),
+    ];
+
+    const status = candidates.find((candidate) => {
+      const normalized = normalizeText(String(candidate || ''));
+      return normalized && !['n/a', 'na', 'غير متاح'].includes(normalized);
+    });
+
+    return String(status || '').trim();
   }
 
   private isZidOrderDelivered(details: any): boolean {

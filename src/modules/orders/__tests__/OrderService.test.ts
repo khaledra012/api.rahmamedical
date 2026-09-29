@@ -75,12 +75,14 @@ describe('OrderService Unit Tests', () => {
     const deliveredDetails = {
       id: 75500001,
       order_status: { code: 'delivered', name: 'تم التوصيل' },
+      display_status: { code: 'delivered', name: 'تم التوصيل' },
       delivered_at: '2026-09-29T10:00:00Z',
       shipping: {
         method: {
           id: 733717,
           name: 'تريك',
-          order_shipping_status: 'تم التوصيل',
+          order_shipping_status: null,
+          tracking: { status: 'N/A' },
         },
       },
     };
@@ -124,6 +126,7 @@ describe('OrderService Unit Tests', () => {
       expect(result?.codSettlementStatus).toBe('SETTLED');
       expect(result?.codTreasuryId).toBe(33);
       expect(result?.treasuryId).toBe(33);
+      expect(result?.shippingStatus).toBe('تم التوصيل');
     });
 
     it('links an existing matching Daftra payment without creating a duplicate', async () => {
