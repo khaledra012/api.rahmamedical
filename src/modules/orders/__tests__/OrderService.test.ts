@@ -2,6 +2,7 @@ import { OrderService } from '../services/OrderService';
 import { Order } from '../models/Order';
 import { OrderItem } from '../models/OrderItem';
 import { PaymentMapping } from '../models/PaymentMapping';
+import { ShippingTreasuryMapping } from '../models/ShippingTreasuryMapping';
 import { Product } from '../../products/models/Product';
 import { ProductMapping } from '../../products/models/ProductMapping';
 import { SyncLog } from '../../products/models/SyncLog';
@@ -21,6 +22,7 @@ import {
 jest.mock('../models/Order');
 jest.mock('../models/OrderItem');
 jest.mock('../models/PaymentMapping');
+jest.mock('../models/ShippingTreasuryMapping');
 jest.mock('../../products/models/Product');
 jest.mock('../../products/models/ProductMapping');
 jest.mock('../../products/models/SyncLog');
@@ -30,6 +32,7 @@ jest.mock('../../../shared/integrations/ZidClient');
 const MockOrder = Order as jest.Mocked<typeof Order>;
 const MockOrderItem = OrderItem as jest.Mocked<typeof OrderItem>;
 const MockPaymentMapping = PaymentMapping as jest.Mocked<typeof PaymentMapping>;
+const MockShippingTreasuryMapping = ShippingTreasuryMapping as jest.Mocked<typeof ShippingTreasuryMapping>;
 const MockProduct = Product as jest.Mocked<typeof Product>;
 const MockProductMapping = ProductMapping as jest.Mocked<typeof ProductMapping>;
 const MockSyncLog = SyncLog as jest.Mocked<typeof SyncLog>;
@@ -42,6 +45,137 @@ describe('OrderService Unit Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new OrderService();
+  });
+
+  describe('COD settlement after Zid delivery', () => {
+    const createCodOrder = () => ({
+      id: 501,
+      storeOrderId: 'ZID-75500001',
+      storeType: 'ZID',
+      paymentMethod: 'zid_cod',
+      status: 'DRAFT_CREATED',
+      daftraDraftInvoiceId: 9001,
+      daftraInvoiceNumber: 'INV-9001',
+      totalAmount: 1000,
+      codSettlementStatus: 'PENDING_DELIVERY',
+      codSettlementStartedAt: null,
+      codSettlementMessage: null,
+      codTreasuryId: null,
+      treasuryId: 35,
+      daftraPaymentId: null,
+      shippingMethodId: null,
+      shippingMethodName: null,
+      zidOrderStatus: null,
+      shippingStatus: null,
+      shippingStatusUpdatedAt: null,
+      rawOrderData: {},
+      save: jest.fn().mockResolvedValue(true),
+    });
+
+    const deliveredDetails = {
+      id: 75500001,
+      order_status: { code: 'delivered', name: 'تم التوصيل' },
+      delivered_at: '2026-09-29T10:00:00Z',
+      shipping: {
+        method: {
+          id: 733717,
+          name: 'تريك',
+          order_shipping_status: 'تم التوصيل',
+        },
+      },
+    };
+
+    it('records one invoice payment in the carrier treasury when COD is delivered', async () => {
+      const order = createCodOrder();
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockOrder.update as jest.Mock).mockResolvedValue([1]);
+      (MockOrder.findByPk as jest.Mock).mockResolvedValue(order);
+      (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue({ order: deliveredDetails });
+      (MockShippingTreasuryMapping.findOne as jest.Mock).mockResolvedValue({
+        shippingMethodId: '733717',
+        shippingMethodName: 'تريك',
+        treasuryId: 33,
+        treasuryName: 'تريك - cod',
+        isActive: true,
+      });
+      (MockDaftraClient.getInvoice as jest.Mock).mockResolvedValue({
+        data: {
+          Invoice: {
+            summary_total: 1000,
+            summary_paid: 0,
+            summary_unpaid: 1000,
+            InvoicePayment: [],
+          },
+        },
+      });
+      (MockDaftraClient.addInvoicePayment as jest.Mock).mockResolvedValue({ id: 7001 });
+      (MockSyncLog.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.handleZidOrderStatusUpdate('75500001', deliveredDetails);
+
+      expect(MockDaftraClient.addInvoicePayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoice_id: 9001,
+          amount: 1000,
+          treasury_id: 33,
+          transaction_id: 'COD-ZID-75500001',
+        })
+      );
+      expect(result?.codSettlementStatus).toBe('SETTLED');
+      expect(result?.codTreasuryId).toBe(33);
+      expect(result?.treasuryId).toBe(33);
+    });
+
+    it('links an existing matching Daftra payment without creating a duplicate', async () => {
+      const order = createCodOrder();
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockOrder.update as jest.Mock).mockResolvedValue([1]);
+      (MockOrder.findByPk as jest.Mock).mockResolvedValue(order);
+      (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue({ order: deliveredDetails });
+      (MockShippingTreasuryMapping.findOne as jest.Mock).mockResolvedValue({
+        shippingMethodId: '733717',
+        shippingMethodName: 'تريك',
+        treasuryId: 33,
+        treasuryName: 'تريك - cod',
+        isActive: true,
+      });
+      (MockDaftraClient.getInvoice as jest.Mock).mockResolvedValue({
+        data: {
+          Invoice: {
+            summary_total: 1000,
+            summary_paid: 1000,
+            summary_unpaid: 0,
+            InvoicePayment: [{ id: 7002, transaction_id: 'COD-ZID-75500001' }],
+          },
+        },
+      });
+
+      const result = await service.handleZidOrderStatusUpdate('75500001', deliveredDetails);
+
+      expect(MockDaftraClient.addInvoicePayment).not.toHaveBeenCalled();
+      expect(result?.codSettlementStatus).toBe('SETTLED');
+      expect(result?.daftraPaymentId).toBe('7002');
+    });
+
+    it('requires review and does not use the generic COD treasury for an unmapped carrier', async () => {
+      const order = createCodOrder();
+      const unknownCarrier = {
+        ...deliveredDetails,
+        shipping: { method: { id: 999999, name: 'شركة جديدة', order_shipping_status: 'تم التوصيل' } },
+      };
+      (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockOrder.update as jest.Mock).mockResolvedValue([1]);
+      (MockOrder.findByPk as jest.Mock).mockResolvedValue(order);
+      (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue({ order: unknownCarrier });
+      (MockShippingTreasuryMapping.findOne as jest.Mock).mockResolvedValue(null);
+      (MockShippingTreasuryMapping.findAll as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.handleZidOrderStatusUpdate('75500001', unknownCarrier);
+
+      expect(MockDaftraClient.addInvoicePayment).not.toHaveBeenCalled();
+      expect(result?.codSettlementStatus).toBe('REVIEW_REQUIRED');
+      expect(result?.codSettlementMessage).toContain('شركة جديدة');
+    });
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -703,12 +837,14 @@ describe('OrderService Unit Tests', () => {
 
       const query = (MockOrder.findAndCountAll as jest.Mock).mock.calls[0][0];
       const clauses = query.where[Op.or];
-      expect(clauses).toHaveLength(2);
+      expect(clauses).toHaveLength(4);
       expect(clauses[1].status).toBe('CANCEL_PENDING');
       const cutoff = clauses[1].updatedAt[Op.lt] as Date;
       expect(cutoff).toBeInstanceOf(Date);
       expect(cutoff.getTime()).toBeGreaterThanOrEqual(startedAt - (5 * 60 * 1000) - 1000);
       expect(cutoff.getTime()).toBeLessThanOrEqual(Date.now() - (5 * 60 * 1000));
+      expect(clauses[2].codSettlementStatus[Op.in]).toEqual(['FAILED', 'REVIEW_REQUIRED']);
+      expect(clauses[3].codSettlementStatus).toBe('PROCESSING');
     });
   });
 });

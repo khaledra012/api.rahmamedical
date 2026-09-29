@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import { Order } from '../models/Order';
 import { OrderItem } from '../models/OrderItem';
 import { PaymentMapping } from '../models/PaymentMapping';
+import { ShippingTreasuryMapping } from '../models/ShippingTreasuryMapping';
 import { Product } from '../../products/models/Product';
 import { ProductMapping } from '../../products/models/ProductMapping';
 import { SyncLog } from '../../products/models/SyncLog';
@@ -27,9 +28,21 @@ import {
 } from '../dtos/order.dtos';
 
 const CANCEL_PENDING_STALE_MS = 5 * 60 * 1000;
+const COD_SETTLEMENT_STALE_MS = 5 * 60 * 1000;
+const COD_PAYMENT_METHODS = ['cod', 'cash_on_delivery', 'zid_cod'];
+
+const normalizeText = (value: unknown): string =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const isCodPaymentMethod = (value: unknown): boolean =>
+  COD_PAYMENT_METHODS.includes(normalizeText(value));
 
 export class OrderService {
   private readonly cancellationRequests = new Map<string, Promise<Order>>();
+  private readonly codSettlementRequests = new Map<number, Promise<Order>>();
 
   // ──────────────────────────────────────────────────────────────
   // 1. استقبال الطلب مع حماية التكرار (Idempotent Ingestion)
@@ -54,6 +67,14 @@ export class OrderService {
       customerEmail: payload.customerEmail || null,
       shippingAddress: payload.shippingAddress || null,
       paymentMethod: payload.paymentMethod,
+      shippingMethodId: payload.shippingMethodId || null,
+      shippingMethodName: payload.shippingMethodName || null,
+      zidOrderStatus: payload.zidOrderStatus || null,
+      shippingStatus: payload.shippingStatus || payload.zidOrderStatus || null,
+      shippingStatusUpdatedAt: payload.zidOrderStatus || payload.shippingStatus ? new Date() : null,
+      codSettlementStatus: isCodPaymentMethod(payload.paymentMethod)
+        ? 'PENDING_DELIVERY'
+        : 'NOT_APPLICABLE',
       subtotal: payload.subtotal,
       shippingFee: payload.shippingFee,
       discountAmount: payload.discountAmount,
@@ -480,6 +501,389 @@ export class OrderService {
   private toNumber(value: any): number {
     const parsed = Number.parseFloat(String(value ?? 0).replace(/[^0-9.-]/g, ''));
     return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // 1.C متابعة حالة الشحن وتسوية الدفع عند الاستلام بعد التوصيل
+  // ──────────────────────────────────────────────────────────────
+  async handleZidOrderStatusUpdate(
+    zidOrderId: string,
+    webhookPayload: any,
+    source: 'WEBHOOK' | 'POLLER' | 'RETRY_ENGINE' = 'WEBHOOK',
+    verifyWithZid: boolean = true
+  ): Promise<Order | null> {
+    const cleanZidOrderId = String(zidOrderId).replace(/^ZID-/i, '');
+    const storeOrderId = `ZID-${cleanZidOrderId}`;
+    let details = this.unwrapZidOrder(webhookPayload);
+
+    if (verifyWithZid) {
+      try {
+        const response: any = await zidClient.getOrderDetails(cleanZidOrderId);
+        details = response?.order || response?.data?.order || response?.data || response || details;
+      } catch (error: any) {
+        logger.warn(
+          `[OrderStatus] Could not refresh Zid order ${cleanZidOrderId}; using webhook payload: ${error.message}`
+        );
+      }
+    }
+
+    const zidStatus = this.extractZidOrderStatus(details);
+    if (['cancelled', 'canceled'].includes(normalizeText(zidStatus))) {
+      return this.handleZidOrderCancellation(cleanZidOrderId, webhookPayload);
+    }
+
+    const order = await Order.findOne({ where: { storeOrderId } });
+    if (!order) {
+      logger.warn(`[OrderStatus] Ignoring status update for unknown order ${storeOrderId}.`);
+      return null;
+    }
+
+    this.applyZidTracking(order, details);
+    if (verifyWithZid && details && Object.keys(details).length > 0) {
+      order.rawOrderData = details;
+    }
+
+    if (isCodPaymentMethod(order.paymentMethod) && order.codSettlementStatus === 'NOT_APPLICABLE') {
+      order.codSettlementStatus = 'PENDING_DELIVERY';
+    }
+    await order.save();
+
+    if (isCodPaymentMethod(order.paymentMethod) && this.isZidOrderDelivered(details)) {
+      return this.settleDeliveredCodOrder(order.id, details, source);
+    }
+
+    return order;
+  }
+
+  async retryCodSettlement(orderId: number): Promise<Order> {
+    const order = await Order.findByPk(orderId);
+    if (!order) throw new NotFoundError('الطلب غير موجود');
+    if (order.storeType !== 'ZID' || !isCodPaymentMethod(order.paymentMethod)) {
+      throw new ConflictError('هذا الطلب ليس طلب دفع عند الاستلام من زد');
+    }
+    if (order.codSettlementStatus === 'SETTLED') return order;
+    if (order.status.startsWith('CANCEL')) {
+      throw new ConflictError('الطلب دخل مسار الإلغاء ولا يمكن تسجيل سداد COD له');
+    }
+
+    const zidOrderId = order.storeOrderId.replace(/^ZID-/i, '');
+    const response: any = await zidClient.getOrderDetails(zidOrderId);
+    const details = response?.order || response?.data?.order || response?.data || response;
+    this.applyZidTracking(order, details);
+    await order.save();
+
+    if (!this.isZidOrderDelivered(details)) {
+      throw new ConflictError('زد لا يؤكد أن الطلب تم توصيله حتى الآن');
+    }
+
+    return this.settleDeliveredCodOrder(order.id, details, 'RETRY_ENGINE', true);
+  }
+
+  private async settleDeliveredCodOrder(
+    orderId: number,
+    details: any,
+    source: 'WEBHOOK' | 'POLLER' | 'RETRY_ENGINE',
+    allowStaleRetry: boolean = false
+  ): Promise<Order> {
+    const existingRequest = this.codSettlementRequests.get(orderId);
+    if (existingRequest) return existingRequest;
+
+    const request = this.processDeliveredCodSettlement(orderId, details, source, allowStaleRetry)
+      .finally(() => this.codSettlementRequests.delete(orderId));
+    this.codSettlementRequests.set(orderId, request);
+    return request;
+  }
+
+  private async processDeliveredCodSettlement(
+    orderId: number,
+    details: any,
+    source: 'WEBHOOK' | 'POLLER' | 'RETRY_ENGINE',
+    allowStaleRetry: boolean
+  ): Promise<Order> {
+    const staleCutoff = new Date(Date.now() - COD_SETTLEMENT_STALE_MS);
+    const lockableStates: any[] = [
+      { codSettlementStatus: null },
+      { codSettlementStatus: { [Op.in]: ['NOT_APPLICABLE', 'PENDING_DELIVERY', 'FAILED', 'REVIEW_REQUIRED'] } },
+    ];
+    if (allowStaleRetry) {
+      lockableStates.push({
+        codSettlementStatus: 'PROCESSING',
+        codSettlementStartedAt: { [Op.lt]: staleCutoff },
+      });
+    }
+
+    const [locked] = await Order.update(
+      {
+        codSettlementStatus: 'PROCESSING',
+        codSettlementStartedAt: new Date(),
+        codSettlementMessage: 'جارٍ تسجيل سداد COD في خزينة شركة الشحن.',
+      },
+      { where: { id: orderId, [Op.or]: lockableStates } }
+    );
+
+    let order = await Order.findByPk(orderId);
+    if (!order) throw new NotFoundError('الطلب غير موجود');
+    if (!locked || order.codSettlementStatus === 'SETTLED') return order;
+
+    const shippingMethod = this.extractShippingMethod(details);
+    const mapping = await this.resolveShippingTreasury(shippingMethod.id, shippingMethod.name);
+    if (!mapping) {
+      order.codSettlementStatus = 'REVIEW_REQUIRED';
+      order.codSettlementStartedAt = null;
+      order.codSettlementMessage = `شركة الشحن "${shippingMethod.name || 'غير معروفة'}" ليس لها خزينة COD معرّفة.`;
+      await order.save();
+      return order;
+    }
+
+    order.shippingMethodId = shippingMethod.id || order.shippingMethodId;
+    order.shippingMethodName = shippingMethod.name || order.shippingMethodName;
+    order.codTreasuryId = mapping.treasuryId;
+
+    if (!order.daftraDraftInvoiceId) {
+      order.codSettlementStatus = 'FAILED';
+      order.codSettlementStartedAt = null;
+      order.codSettlementMessage = 'لا يمكن تسجيل سداد COD قبل إصدار فاتورة دفترة.';
+      await order.save();
+      return order;
+    }
+
+    const transactionId = `COD-${order.storeOrderId}`;
+    const startedAt = Date.now();
+
+    try {
+      const invoiceResponse: any = await daftraClient.getInvoice(order.daftraDraftInvoiceId);
+      const invoice = this.extractDaftraInvoice(invoiceResponse);
+      const payments = this.extractDaftraInvoicePayments(invoice);
+      const matchingPayment = this.findCodPayment(payments, transactionId);
+
+      if (matchingPayment) {
+        order = await this.markCodSettlementComplete(order, mapping, matchingPayment);
+        return order;
+      }
+
+      const paidAmount = this.toNumber(invoice?.summary_paid);
+      const unpaidAmount = this.toNumber(invoice?.summary_unpaid);
+      if (paidAmount > 0 || (unpaidAmount <= 0 && this.toNumber(invoice?.summary_total) > 0)) {
+        order.codSettlementStatus = 'REVIEW_REQUIRED';
+        order.codSettlementStartedAt = null;
+        order.codSettlementMessage =
+          'الفاتورة عليها سداد سابق غير مرتبط بتسوية COD الآلية؛ يلزم مراجعتها قبل أي سداد جديد.';
+        await order.save();
+        return order;
+      }
+
+      const paymentAmount = unpaidAmount || this.toNumber(order.totalAmount);
+      if (paymentAmount <= 0) {
+        order.codSettlementStatus = 'FAILED';
+        order.codSettlementStartedAt = null;
+        order.codSettlementMessage = 'قيمة الفاتورة المتبقية غير صالحة لتسجيل سداد COD.';
+        await order.save();
+        return order;
+      }
+
+      const deliveredAt = details?.delivered_at ? new Date(details.delivered_at) : new Date();
+      const paymentDate = !isNaN(deliveredAt.getTime())
+        ? deliveredAt.toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0];
+
+      let paymentResponse: any;
+      try {
+        paymentResponse = await daftraClient.addInvoicePayment({
+          invoice_id: order.daftraDraftInvoiceId,
+          amount: paymentAmount,
+          treasury_id: mapping.treasuryId,
+          payment_method: `الدفع عند الاستلام - ${mapping.treasuryName}`,
+          date: paymentDate,
+          transaction_id: transactionId,
+          notes: `تحصيل COD بعد توصيل طلب زد ${order.storeOrderId} بواسطة ${mapping.shippingMethodName} | ${transactionId}`,
+        });
+      } catch (paymentError) {
+        // قد تكون دفترة حفظت السداد ثم انقطع الاتصال؛ نعيد القراءة قبل إعلان الفشل.
+        const retryInvoiceResponse: any = await daftraClient.getInvoice(order.daftraDraftInvoiceId);
+        const retryInvoice = this.extractDaftraInvoice(retryInvoiceResponse);
+        const recoveredPayment = this.findCodPayment(
+          this.extractDaftraInvoicePayments(retryInvoice),
+          transactionId
+        );
+        if (!recoveredPayment) throw paymentError;
+        paymentResponse = recoveredPayment;
+      }
+
+      const paymentRecord =
+        paymentResponse?.data?.InvoicePayment ||
+        paymentResponse?.InvoicePayment ||
+        paymentResponse?.data ||
+        paymentResponse;
+      order = await this.markCodSettlementComplete(order, mapping, paymentRecord);
+
+      await SyncLog.create({
+        entityType: 'ORDER',
+        entityId: order.id,
+        action: source === 'RETRY_ENGINE' ? 'RETRY' : 'UPDATE',
+        direction: 'ZID_TO_DAFTRA',
+        source,
+        requestUrl: `${env.daftra.baseUrl}/invoice_payments.json`,
+        requestMethod: 'POST',
+        requestPayload: {
+          invoiceId: order.daftraDraftInvoiceId,
+          treasuryId: mapping.treasuryId,
+          transactionId,
+        },
+        responseBody: { paymentId: order.daftraPaymentId },
+        status: 'SUCCESS',
+        durationMs: Date.now() - startedAt,
+      });
+
+      return order;
+    } catch (error: any) {
+      order.codSettlementStatus = 'FAILED';
+      order.codSettlementStartedAt = null;
+      order.codSettlementMessage = `فشل تسجيل سداد COD في دفترة: ${error.message}`;
+      await order.save();
+
+      await SyncLog.create({
+        entityType: 'ORDER',
+        entityId: order.id,
+        action: source === 'RETRY_ENGINE' ? 'RETRY' : 'UPDATE',
+        direction: 'ZID_TO_DAFTRA',
+        source,
+        requestUrl: `${env.daftra.baseUrl}/invoice_payments.json`,
+        requestMethod: 'POST',
+        requestPayload: {
+          invoiceId: order.daftraDraftInvoiceId,
+          treasuryId: mapping.treasuryId,
+          transactionId,
+        },
+        status: 'FAILED',
+        errorMessage: error.message,
+        durationMs: Date.now() - startedAt,
+      });
+
+      logger.error(`[OrderService] COD settlement failed for ${order.storeOrderId}: ${error.message}`);
+      return order;
+    }
+  }
+
+  private unwrapZidOrder(payload: any): any {
+    return payload?.payload || payload?.order || payload?.data?.order || payload?.data || payload || {};
+  }
+
+  private extractZidOrderStatus(details: any): string {
+    return String(
+      details?.order_status?.code ||
+        details?.display_status?.code ||
+        details?.status?.code ||
+        (typeof details?.order_status === 'string' ? details.order_status : '') ||
+        (typeof details?.status === 'string' ? details.status : '') ||
+        ''
+    );
+  }
+
+  private extractShippingMethod(details: any): { id: string | null; name: string } {
+    const method = details?.shipping?.method || details?.shipping_method || {};
+    return {
+      id: method?.id !== undefined && method?.id !== null ? String(method.id) : null,
+      name: String(method?.name || method?.display_name || details?.shipping_method_name || '').trim(),
+    };
+  }
+
+  private extractShippingStatus(details: any): string {
+    return String(
+      details?.shipping?.method?.order_shipping_status ||
+        details?.shipping?.method?.tracking?.status ||
+        details?.display_status?.name ||
+        details?.order_status?.name ||
+        this.extractZidOrderStatus(details) ||
+        ''
+    ).trim();
+  }
+
+  private isZidOrderDelivered(details: any): boolean {
+    if (details?.delivered_at) return true;
+    const candidates = [
+      this.extractZidOrderStatus(details),
+      this.extractShippingStatus(details),
+      details?.shipping?.method?.tracking?.status,
+    ].map(normalizeText);
+    return candidates.some((status) =>
+      ['delivered', 'تم التوصيل', 'تم التسليم'].some(
+        (deliveredStatus) => status === deliveredStatus || status.includes(deliveredStatus)
+      )
+    );
+  }
+
+  private applyZidTracking(order: Order, details: any): void {
+    const method = this.extractShippingMethod(details);
+    const zidStatus = this.extractZidOrderStatus(details);
+    const shippingStatus = this.extractShippingStatus(details);
+    const rawTimestamp = details?.updated_at || details?.modified_at || details?.delivered_at;
+    const parsedTimestamp = rawTimestamp ? new Date(rawTimestamp) : new Date();
+
+    if (method.id) order.shippingMethodId = method.id;
+    if (method.name) order.shippingMethodName = method.name;
+    if (zidStatus) order.zidOrderStatus = zidStatus;
+    if (shippingStatus) order.shippingStatus = shippingStatus;
+    order.shippingStatusUpdatedAt = isNaN(parsedTimestamp.getTime()) ? new Date() : parsedTimestamp;
+  }
+
+  private async resolveShippingTreasury(
+    shippingMethodId: string | null,
+    shippingMethodName: string
+  ): Promise<ShippingTreasuryMapping | null> {
+    if (shippingMethodId) {
+      const byId = await ShippingTreasuryMapping.findOne({
+        where: { shippingMethodId, isActive: true },
+      });
+      if (byId) return byId;
+    }
+
+    const mappings = await ShippingTreasuryMapping.findAll({ where: { isActive: true } });
+    const normalizedName = normalizeText(shippingMethodName);
+    return (
+      mappings.find((mapping) => normalizeText(mapping.shippingMethodName) === normalizedName) || null
+    );
+  }
+
+  private extractDaftraInvoice(response: any): any {
+    return response?.data?.Invoice || response?.Invoice || response?.data || response || {};
+  }
+
+  private extractDaftraInvoicePayments(invoice: any): any[] {
+    return Array.isArray(invoice?.InvoicePayment)
+      ? invoice.InvoicePayment
+      : Array.isArray(invoice?.payments)
+      ? invoice.payments
+      : [];
+  }
+
+  private findCodPayment(payments: any[], transactionId: string): any | null {
+    return (
+      payments.find((payment: any) => {
+        const paymentData = payment?.InvoicePayment || payment;
+        const reference = String(
+          paymentData?.transaction_id || paymentData?.transaction_number || paymentData?.reference || ''
+        );
+        const notes = String(paymentData?.notes || '');
+        return reference === transactionId || notes.includes(transactionId);
+      }) || null
+    );
+  }
+
+  private async markCodSettlementComplete(
+    order: Order,
+    mapping: ShippingTreasuryMapping,
+    payment: any
+  ): Promise<Order> {
+    const paymentData = payment?.InvoicePayment || payment || {};
+    order.codSettlementStatus = 'SETTLED';
+    order.codSettlementStartedAt = null;
+    order.codSettledAt = new Date();
+    order.codTreasuryId = mapping.treasuryId;
+    order.treasuryId = mapping.treasuryId;
+    order.daftraPaymentId = paymentData?.id ? String(paymentData.id) : order.daftraPaymentId;
+    order.codSettlementMessage = `تم سداد الفاتورة في خزينة ${mapping.treasuryName} رقم ${mapping.treasuryId}.`;
+    await order.save();
+    return order;
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -1019,6 +1423,13 @@ export class OrderService {
           status: 'CANCEL_PENDING',
           updatedAt: { [Op.lt]: staleCancellationCutoff },
         },
+        {
+          codSettlementStatus: { [Op.in]: ['FAILED', 'REVIEW_REQUIRED'] },
+        },
+        {
+          codSettlementStatus: 'PROCESSING',
+          codSettlementStartedAt: { [Op.lt]: staleCancellationCutoff },
+        },
       ];
     } else if (filters.status) {
       where.status = filters.status;
@@ -1066,13 +1477,25 @@ export class OrderService {
         updatedAt: { [Op.lt]: new Date(Date.now() - CANCEL_PENDING_STALE_MS) },
       },
     });
+    const codSettlementIssueOrders = await Order.count({
+      where: {
+        [Op.or]: [
+          { codSettlementStatus: { [Op.in]: ['FAILED', 'REVIEW_REQUIRED'] } },
+          {
+            codSettlementStatus: 'PROCESSING',
+            codSettlementStartedAt: { [Op.lt]: new Date(Date.now() - COD_SETTLEMENT_STALE_MS) },
+          },
+        ],
+      },
+    });
     const stalledOrders =
       failedOrders +
       unmappedPaymentOrders +
       unmappedProductOrders +
       cancellationFailedOrders +
       cancellationReviewOrders +
-      staleCancellationPendingOrders;
+      staleCancellationPendingOrders +
+      codSettlementIssueOrders;
 
     const recentLogs = await SyncLog.findAll({
       where: { entityType: 'ORDER' },
@@ -1090,6 +1513,7 @@ export class OrderService {
       stalledOrders,
       cancelledOrders,
       cancellationReviewOrders,
+      codSettlementIssueOrders,
       recentLogs: recentLogs.map((l) => l.toJSON()),
     };
   }

@@ -78,6 +78,7 @@ export class OrderPollerService {
       const perPage = 50;
       let hasMore = true;
       const candidateOrders: any[] = [];
+      let observedZidOrders: any[] = [];
 
       // التكرار عبر الصفحات حتى نصل لأول طلب قديم خارج النافذة
       while (hasMore && page <= 50) {
@@ -87,6 +88,10 @@ export class OrderPollerService {
           : Array.isArray(zidOrdersRes?.data)
           ? zidOrdersRes.data
           : [];
+
+        if (page === 1) {
+          observedZidOrders = rawOrders;
+        }
 
         if (rawOrders.length === 0) {
           hasMore = false;
@@ -221,6 +226,21 @@ export class OrderPollerService {
             customerEmail: detailedOrder.customer?.email || null,
             shippingAddress: addressInfo.fullAddress,
             paymentMethod: String(paymentMethodCode).toLowerCase(),
+            shippingMethodId: detailedOrder.shipping?.method?.id
+              ? String(detailedOrder.shipping.method.id)
+              : null,
+            shippingMethodName:
+              detailedOrder.shipping?.method?.name ||
+              detailedOrder.shipping?.method?.display_name ||
+              detailedOrder.shipping_method?.name ||
+              null,
+            zidOrderStatus: zidStatus || null,
+            shippingStatus:
+              detailedOrder.shipping?.method?.order_shipping_status ||
+              detailedOrder.shipping?.method?.tracking?.status ||
+              detailedOrder.display_status?.name ||
+              detailedOrder.order_status?.name ||
+              null,
             items,
             subtotal: parseFloat(detailedOrder.sub_total || detailedOrder.subtotal || 0),
             shippingFee:
@@ -252,6 +272,32 @@ export class OrderPollerService {
           // التوقف عند أول فشل حتى ترتكز نقطة التوقف (Watermark) عند تاريخ آخر عنصر نجح قبله
           break;
         }
+      }
+
+      // تحديث حالات أحدث الطلبات الموجودة، حتى لو كانت أقدم من نافذة إنشاء الطلبات الجديدة.
+      // كما نجلب أحدث الطلبات المسلّمة كشبكة أمان إذا ضاع إشعار الويب هوك.
+      try {
+        const deliveredResponse: any = await zidClient.getOrders(1, 50, 'delivered');
+        const deliveredOrders: any[] = Array.isArray(deliveredResponse?.orders)
+          ? deliveredResponse.orders
+          : Array.isArray(deliveredResponse?.data)
+          ? deliveredResponse.data
+          : [];
+        const statusSnapshots = new Map<string, any>();
+        for (const snapshot of [...observedZidOrders, ...deliveredOrders]) {
+          const zidId = snapshot?.id || snapshot?.order_id || snapshot?.code;
+          if (zidId) statusSnapshots.set(String(zidId), snapshot);
+        }
+
+        for (const [zidId, snapshot] of statusSnapshots) {
+          try {
+            await orderService.handleZidOrderStatusUpdate(zidId, snapshot, 'POLLER', false);
+          } catch (statusError: any) {
+            logger.warn(`[OrderPoller] Could not reconcile status for order #${zidId}: ${statusError.message}`);
+          }
+        }
+      } catch (statusPollError: any) {
+        logger.warn(`[OrderPoller] Delivery-status fallback check failed: ${statusPollError.message}`);
       }
 
       // 2. فحص طلبات ترينديول الجديدة (Trendyol Orders Fetch - يتم تخطيه إذا كان المتجر معطلاً)

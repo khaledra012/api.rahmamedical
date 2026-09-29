@@ -44,6 +44,13 @@ export class OrderController {
     sendSuccess(res, order);
   });
 
+  /** POST /api/orders/:id/retry-cod-settlement */
+  static retryCodSettlement = asyncHandler(async (req: Request, res: Response) => {
+    const orderId = parseInt(req.params.id as string, 10);
+    const order = await orderService.retryCodSettlement(orderId);
+    sendSuccess(res, order);
+  });
+
   /**
    * POST /api/orders/simulate - محاكاة طلب تجريبي للاختبار
    */

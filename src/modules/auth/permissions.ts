@@ -4,6 +4,7 @@ export type Permission =
   | 'products.manage'
   | 'orders.retry'
   | 'cancellations.retry'
+  | 'cod_settlements.retry'
   | 'orders.simulate'
   | 'logs.retry'
   | 'users.manage';
@@ -13,6 +14,7 @@ const rolePermissions: Record<UserRole, Permission[]> = {
     'products.manage',
     'orders.retry',
     'cancellations.retry',
+    'cod_settlements.retry',
     'orders.simulate',
     'logs.retry',
     'users.manage',

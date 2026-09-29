@@ -1,6 +1,6 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../../../config/database';
-import { OrderStatus, StoreType } from '../dtos/order.dtos';
+import { CodSettlementStatus, OrderStatus, StoreType } from '../dtos/order.dtos';
 
 export interface OrderAttributes {
   id: number;
@@ -12,6 +12,17 @@ export interface OrderAttributes {
   shippingAddress: string | null;
   paymentMethod: string;
   treasuryId: number | null;
+  shippingMethodId: string | null;
+  shippingMethodName: string | null;
+  zidOrderStatus: string | null;
+  shippingStatus: string | null;
+  shippingStatusUpdatedAt: Date | null;
+  codSettlementStatus: CodSettlementStatus;
+  codSettlementMessage: string | null;
+  codTreasuryId: number | null;
+  codSettlementStartedAt: Date | null;
+  codSettledAt: Date | null;
+  daftraPaymentId: string | null;
   subtotal: number;
   shippingFee: number;
   discountAmount: number;
@@ -38,6 +49,17 @@ export interface OrderCreationAttributes
     | 'customerEmail'
     | 'shippingAddress'
     | 'treasuryId'
+    | 'shippingMethodId'
+    | 'shippingMethodName'
+    | 'zidOrderStatus'
+    | 'shippingStatus'
+    | 'shippingStatusUpdatedAt'
+    | 'codSettlementStatus'
+    | 'codSettlementMessage'
+    | 'codTreasuryId'
+    | 'codSettlementStartedAt'
+    | 'codSettledAt'
+    | 'daftraPaymentId'
     | 'subtotal'
     | 'shippingFee'
     | 'discountAmount'
@@ -65,6 +87,17 @@ export class Order extends Model<OrderAttributes, OrderCreationAttributes> imple
   declare shippingAddress: string | null;
   declare paymentMethod: string;
   declare treasuryId: number | null;
+  declare shippingMethodId: string | null;
+  declare shippingMethodName: string | null;
+  declare zidOrderStatus: string | null;
+  declare shippingStatus: string | null;
+  declare shippingStatusUpdatedAt: Date | null;
+  declare codSettlementStatus: CodSettlementStatus;
+  declare codSettlementMessage: string | null;
+  declare codTreasuryId: number | null;
+  declare codSettlementStartedAt: Date | null;
+  declare codSettledAt: Date | null;
+  declare daftraPaymentId: string | null;
   declare subtotal: number;
   declare shippingFee: number;
   declare discountAmount: number;
@@ -125,6 +158,51 @@ Order.init(
     treasuryId: {
       type: DataTypes.INTEGER,
       allowNull: true, // null if UNMAPPED_PAYMENT
+    },
+    shippingMethodId: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    shippingMethodName: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    zidOrderStatus: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    shippingStatus: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    shippingStatusUpdatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    codSettlementStatus: {
+      type: DataTypes.STRING(40),
+      allowNull: false,
+      defaultValue: 'NOT_APPLICABLE',
+    },
+    codSettlementMessage: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    codTreasuryId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    codSettlementStartedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    codSettledAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    daftraPaymentId: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
     },
     subtotal: {
       type: DataTypes.DECIMAL(12, 2),

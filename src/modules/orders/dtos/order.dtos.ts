@@ -17,6 +17,14 @@ export type OrderStatus =
 
 export type StoreType = 'ZID' | 'TRENDYOL';
 
+export type CodSettlementStatus =
+  | 'NOT_APPLICABLE'
+  | 'PENDING_DELIVERY'
+  | 'PROCESSING'
+  | 'SETTLED'
+  | 'FAILED'
+  | 'REVIEW_REQUIRED';
+
 export type PaymentMethodKey =
   | 'tabby'
   | 'tamara'
@@ -50,6 +58,10 @@ export interface IncomingOrderPayload {
   customerEmail?: string | null;
   shippingAddress?: string | null;
   paymentMethod: string;
+  shippingMethodId?: string | null;
+  shippingMethodName?: string | null;
+  zidOrderStatus?: string | null;
+  shippingStatus?: string | null;
   items: OrderItemDTO[];
   subtotal: number;
   shippingFee: number;
@@ -78,6 +90,7 @@ export interface OrderStatsDTO {
   stalledOrders: number;
   cancelledOrders: number;
   cancellationReviewOrders: number;
+  codSettlementIssueOrders: number;
   recentLogs: object[];
 }
 

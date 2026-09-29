@@ -27,7 +27,15 @@ export class OrderWebhookController {
     }
 
     if (!['cancelled', 'canceled'].includes(statusCode)) {
-      return res.status(200).json({ success: true, message: 'تم تجاهل حالة لا تمثل إلغاءً كاملاً' });
+      const order = await orderService.handleZidOrderStatusUpdate(String(zidOrderId), req.body);
+      return res.status(200).json({
+        success: true,
+        message: order ? 'تم تحديث حالة الطلب ومعالجة تسوية COD عند الحاجة' : 'الطلب غير مسجل محليًا حتى الآن',
+        orderId: order?.id,
+        status: order?.status,
+        shippingStatus: order?.shippingStatus,
+        codSettlementStatus: order?.codSettlementStatus,
+      });
     }
 
     logger.info(`[Webhook] Received ZID cancellation for order ${zidOrderId}`);
@@ -144,6 +152,18 @@ export class OrderWebhookController {
       customerEmail: raw.customer?.email || null,
       shippingAddress: addressInfo.fullAddress,
       paymentMethod: String(paymentMethodCode).toLowerCase(),
+      shippingMethodId: raw.shipping?.method?.id ? String(raw.shipping.method.id) : null,
+      shippingMethodName:
+        raw.shipping?.method?.name || raw.shipping?.method?.display_name || raw.shipping_method?.name || null,
+      zidOrderStatus: String(
+        raw.order_status?.code || raw.display_status?.code || raw.status?.code || raw.order_status || raw.status || ''
+      ).toLowerCase() || null,
+      shippingStatus:
+        raw.shipping?.method?.order_shipping_status ||
+        raw.shipping?.method?.tracking?.status ||
+        raw.display_status?.name ||
+        raw.order_status?.name ||
+        null,
 
       items,
       subtotal: parseFloat(zidSubtotalItem?.value || raw.sub_total || raw.subtotal || raw.products_sum_total || 0),
