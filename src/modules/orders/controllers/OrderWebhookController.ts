@@ -159,8 +159,10 @@ export class OrderWebhookController {
         raw.order_status?.code || raw.display_status?.code || raw.status?.code || raw.order_status || raw.status || ''
       ).toLowerCase() || null,
       shippingStatus:
-        raw.shipping?.method?.order_shipping_status ||
-        raw.shipping?.method?.tracking?.status ||
+        (!['n/a', 'na', 'غير متاح'].includes(String(raw.shipping?.method?.order_shipping_status || '').toLowerCase().trim()) &&
+          raw.shipping?.method?.order_shipping_status) ||
+        (!['n/a', 'na', 'غير متاح'].includes(String(raw.shipping?.method?.tracking?.status || '').toLowerCase().trim()) &&
+          raw.shipping?.method?.tracking?.status) ||
         raw.display_status?.name ||
         raw.order_status?.name ||
         null,
