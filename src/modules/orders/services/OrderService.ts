@@ -790,6 +790,9 @@ export class OrderService {
   private extractShippingStatus(details: any): string {
     if (details?.delivered_at) return 'تم التوصيل';
 
+    const zidStatus = normalizeText(this.extractZidOrderStatus(details));
+    const isOrderCancelled = ['cancelled', 'canceled'].includes(zidStatus);
+
     const candidates = [
       details?.shipping?.method?.order_shipping_status,
       details?.shipping?.method?.tracking?.status,
@@ -800,7 +803,12 @@ export class OrderService {
 
     const status = candidates.find((candidate) => {
       const normalized = normalizeText(String(candidate || ''));
-      return normalized && !['n/a', 'na', 'غير متاح'].includes(normalized);
+      if (!normalized || ['n/a', 'na', 'غير متاح'].includes(normalized)) return false;
+      // إذا كان الطلب نفسه نشطاً وغير ملغي، لا نأخذ حالة البوليصة الملغاة حتى لا تغطي على حالة الطلب النشط
+      if (!isOrderCancelled && (normalized.includes('cancel') || normalized.includes('ملغ'))) {
+        return false;
+      }
+      return true;
     });
 
     return String(status || '').trim();
