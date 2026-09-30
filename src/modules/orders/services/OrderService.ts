@@ -291,6 +291,9 @@ export class OrderService {
 
     order.cancellationReason = cancellationReason;
     order.cancelledAt = order.cancelledAt || new Date();
+    order.zidOrderStatus = 'cancelled';
+    order.shippingStatus = 'ملغي';
+    order.shippingStatusUpdatedAt = new Date();
 
     if (this.zidOrderHasShipped(details)) {
       order.status = 'CANCEL_REVIEW_REQUIRED';
