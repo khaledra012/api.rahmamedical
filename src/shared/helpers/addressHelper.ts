@@ -69,16 +69,27 @@ export function resolveCountryCode(
 ): string {
   // 1. إذا كان الكود الدولي المباشر مرسلاً من المنصة ككود ISO من حرفين (مثل Zid country.code أو Trendyol countryCode)
   if (directIsoCode && /^[A-Za-z]{2}$/.test(String(directIsoCode).trim())) {
-    return String(directIsoCode).trim().toUpperCase();
+    const direct = String(directIsoCode).trim().toUpperCase();
+    if (direct !== 'NA' && direct !== 'NU' && direct !== 'NO') {
+      return direct;
+    }
   }
 
   if (!countryInput) return 'SA';
   const raw = String(countryInput).trim();
   const lower = raw.toLowerCase();
 
+  // فحص الكلمات غير الصالحة أو الوهمية
+  if (lower === 'na' || lower === 'null' || lower === 'none' || lower === 'undefined') {
+    return 'SA';
+  }
+
   // 2. إذا كان المدخل نفسه كود ISO من حرفين
   if (/^[A-Za-z]{2}$/.test(raw)) {
-    return raw.toUpperCase();
+    const upper = raw.toUpperCase();
+    if (upper !== 'NA' && upper !== 'NU' && upper !== 'NO') {
+      return upper;
+    }
   }
 
   // 3. فحص معرفات المنصات الخاصة بالسعودية (معرف زد 64 أو 184)
@@ -116,6 +127,7 @@ export function resolveCountryCode(
 export function isInternationalCountry(countryCode?: string | null): boolean {
   if (!countryCode) return false;
   const clean = countryCode.trim().toUpperCase();
+  if (clean === 'NA' || clean === 'NULL' || clean === 'NONE' || clean === 'UNDEFINED') return false;
   return clean !== 'SA' && clean !== 'KSA';
 }
 
