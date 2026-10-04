@@ -943,14 +943,15 @@ export class OrderService {
       return { daftraProductId: daftraId };
     }
 
-    // 4️⃣ الخطوة الرابعة (أونلاين في دفترة): البحث في دفترة بالباركود Barcode
-    if (barcode) {
-      logger.info(`[OrderService] Querying Daftra online by Barcode "${barcode}"...`);
-      const daftraProductByBarcode = await daftraClient.searchProductByBarcode(barcode);
+    // 4️⃣ الخطوة الرابعة (أونلاين في دفترة): البحث في دفترة بالباركود Barcode (أو إذا كان الـ SKU نفسه باركود)
+    const barcodeCandidates: string[] = [barcode, sku].filter((b): b is string => Boolean(b && b.trim()));
+    for (const b of barcodeCandidates) {
+      logger.info(`[OrderService] Querying Daftra online by Barcode "${b}"...`);
+      const daftraProductByBarcode = await daftraClient.searchProductByBarcode(b);
 
       if (daftraProductByBarcode && daftraProductByBarcode.id) {
         const daftraId = parseInt(String(daftraProductByBarcode.id), 10);
-        logger.info(`[OrderService] Found legacy Daftra product online by Barcode "${barcode}" (ID: #${daftraId})`);
+        logger.info(`[OrderService] Found legacy Daftra product online by Barcode "${b}" (ID: #${daftraId})`);
         return { daftraProductId: daftraId };
       }
     }
