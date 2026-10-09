@@ -804,7 +804,7 @@ describe('OrderService Unit Tests', () => {
       expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
     });
 
-    it('requires manual review and does not create a return after shipping', async () => {
+    it('creates a full return for a cancelled order even after shipping or delivery', async () => {
       (MockZidClient.getOrderDetails as jest.Mock).mockResolvedValue({
         order: {
           ...cancelledZidOrder.order,
@@ -818,16 +818,29 @@ describe('OrderService Unit Tests', () => {
         storeType: 'ZID',
         status: 'DRAFT_CREATED',
         daftraDraftInvoiceId: 7001,
+        daftraInvoiceNumber: 'INV-7001',
+        daftraRefundReceiptId: null,
+        daftraRefundReceiptNumber: null,
         cancelledAt: null,
+        shippingFee: 0,
+        discountAmount: 0,
+        taxAmount: 10,
+        rawOrderData: {},
         save: jest.fn().mockResolvedValue(true),
       };
       (MockOrder.findOne as jest.Mock).mockResolvedValue(order);
+      (MockDaftraClient.findRefundReceiptByInvoice as jest.Mock).mockResolvedValue(null);
+      (MockDaftraClient.createRefundReceipt as jest.Mock).mockResolvedValue({
+        id: 9003,
+        invoice_number: 'RR-9003',
+      });
 
       const result = await service.handleZidOrderCancellation('10245', {});
 
-      expect(result.status).toBe('CANCEL_REVIEW_REQUIRED');
-      expect(MockDaftraClient.findRefundReceiptByInvoice).not.toHaveBeenCalled();
-      expect(MockDaftraClient.createRefundReceipt).not.toHaveBeenCalled();
+      expect(result.status).toBe('CANCELLED');
+      expect(result.daftraRefundReceiptId).toBe(9003);
+      expect(MockDaftraClient.findRefundReceiptByInvoice).toHaveBeenCalledWith(7001, 'ZID-10245');
+      expect(MockDaftraClient.createRefundReceipt).toHaveBeenCalledTimes(1);
     });
   });
 

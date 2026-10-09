@@ -295,14 +295,6 @@ export class OrderService {
     order.shippingStatus = 'ملغي';
     order.shippingStatusUpdatedAt = new Date();
 
-    if (this.zidOrderHasShipped(details)) {
-      order.status = 'CANCEL_REVIEW_REQUIRED';
-      order.statusMessage = 'الطلب الملغي لديه حركة شحن أو تسليم في زد؛ لم يتم إنشاء مرتجع تلقائي ويحتاج مراجعة يدوية.';
-      await order.save();
-      logger.warn(`[OrderCancellation] ${storeOrderId} requires manual review because it has shipping activity.`);
-      return order;
-    }
-
     order.status = 'CANCEL_PENDING';
     order.statusMessage = 'تم استلام الإلغاء من زد وجارٍ عكس الفاتورة في دفترة.';
     await order.save();
@@ -455,34 +447,6 @@ export class OrderService {
         account_id: Number(item.sales_account_id) || revenueAccountId,
       })),
     };
-  }
-
-  private zidOrderHasShipped(details: any): boolean {
-    if (details?.delivered_at) return true;
-
-    const shippingStatus = String(details?.shipping?.method?.order_shipping_status || '')
-      .toLowerCase()
-      .replace(/[\s-]+/g, '_');
-    const blockedShippingStatuses = [
-      'shipped',
-      'in_delivery',
-      'indelivery',
-      'out_for_delivery',
-      'delivered',
-      'تم_الشحن',
-      'جاري_التوصيل',
-      'في_التوصيل',
-      'تم_التوصيل',
-    ];
-    if (blockedShippingStatuses.includes(shippingStatus)) return true;
-
-    const historyNames = Array.isArray(details?.histories)
-      ? details.histories.map((history: any) => String(history?.order_status_name || '').toLowerCase())
-      : [];
-    return historyNames.some((name: string) =>
-      ['تم الشحن', 'جاري التوصيل', 'في التوصيل', 'تم التوصيل', 'shipped', 'indelivery', 'delivered']
-        .some((blocked) => name.includes(blocked))
-    );
   }
 
   private extractCancellationReason(webhookPayload: any, details: any): string {
