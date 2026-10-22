@@ -8,7 +8,7 @@ import { logger, extractAddressDetails, formatZatcaPhone } from '../../../shared
 export class OrderWebhookController {
   /**
    * POST /api/webhooks/zid/order-status-updated
-   * يعالج الإلغاء الكامل قبل الشحن ويترك رد الأموال بالكامل لزد.
+   * يعالج الإلغاء الكامل وينشئ مرتجع دفترة عند وجود فاتورة، بغض النظر عن حالة الشحن.
    */
   static handleZidOrderStatusUpdated = asyncHandler(async (req: Request, res: Response) => {
     const raw = req.body?.payload || req.body?.order || req.body?.data || req.body;
@@ -44,7 +44,7 @@ export class OrderWebhookController {
     return res.status(200).json({
       success: true,
       message: order.status === 'CANCEL_REVIEW_REQUIRED'
-        ? 'تم تسجيل الإلغاء للمراجعة اليدوية لأن الطلب خرج للشحن'
+        ? order.statusMessage || 'تم تسجيل الإلغاء للمراجعة اليدوية لتعذر بناء مرتجع دفترة تلقائياً'
         : 'تم إلغاء الطلب وإنشاء مرتجع دفترة عند الحاجة',
       orderId: order.id,
       status: order.status,

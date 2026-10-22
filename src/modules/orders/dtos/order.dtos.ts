@@ -13,7 +13,7 @@ export type OrderStatus =
   | 'CANCEL_PENDING'    // وصل إلغاء زد وجارٍ عكس الفاتورة
   | 'CANCELLED'         // تم إلغاء الطلب وعكس فاتورته إن وجدت
   | 'CANCEL_FAILED'     // فشل إنشاء مرتجع دفترة
-  | 'CANCEL_REVIEW_REQUIRED'; // الطلب خرج للشحن ويحتاج مراجعة يدوية
+  | 'CANCEL_REVIEW_REQUIRED'; // بيانات الفاتورة غير كافية لبناء المرتجع تلقائياً
 
 export type StoreType = 'ZID' | 'TRENDYOL';
 

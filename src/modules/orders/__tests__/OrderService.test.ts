@@ -634,7 +634,7 @@ describe('OrderService Unit Tests', () => {
     });
   });
 
-  describe('handleZidOrderCancellation() — Full cancellation before shipping', () => {
+  describe('handleZidOrderCancellation() — Full cancellation regardless of shipping status', () => {
     const cancelledZidOrder = {
       order: {
         id: 10245,

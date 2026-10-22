@@ -204,7 +204,7 @@ export class OrderService {
   }
 
   // ──────────────────────────────────────────────────────────────
-  // 1.B إلغاء طلب زد بالكامل قبل الشحن
+  // 1.B إلغاء طلب زد بالكامل وإنشاء مرتجع عند وجود فاتورة، بغض النظر عن حالة الشحن
   // ──────────────────────────────────────────────────────────────
   async handleZidOrderCancellation(zidOrderId: string, webhookPayload: any): Promise<Order> {
     const cleanZidOrderId = String(zidOrderId).replace(/^ZID-/i, '');
