@@ -29,7 +29,7 @@ import {
 
 const CANCEL_PENDING_STALE_MS = 5 * 60 * 1000;
 const COD_SETTLEMENT_STALE_MS = 5 * 60 * 1000;
-const COD_PAYMENT_METHODS = ['cod', 'cash_on_delivery', 'zid_cod'];
+const COD_PAYMENT_METHODS = ['cod', 'cash_on_delivery', 'zid_cod', 'zid_cop'];
 
 const normalizeText = (value: unknown): string =>
   String(value || '')
@@ -593,7 +593,7 @@ export class OrderService {
     if (!locked || order.codSettlementStatus === 'SETTLED') return order;
 
     const shippingMethod = this.extractShippingMethod(details);
-    const mapping = await this.resolveShippingTreasury(shippingMethod.id, shippingMethod.name);
+    const mapping = await this.resolveCodTreasury(order, shippingMethod);
     if (!mapping) {
       order.codSettlementStatus = 'REVIEW_REQUIRED';
       order.codSettlementStartedAt = null;
@@ -746,11 +746,12 @@ export class OrderService {
     );
   }
 
-  private extractShippingMethod(details: any): { id: string | null; name: string } {
+  private extractShippingMethod(details: any): { id: string | null; name: string; code: string } {
     const method = details?.shipping?.method || details?.shipping_method || {};
     return {
       id: method?.id !== undefined && method?.id !== null ? String(method.id) : null,
       name: String(method?.name || method?.display_name || details?.shipping_method_name || '').trim(),
+      code: String(method?.code || details?.shipping_method?.code || '').trim(),
     };
   }
 
@@ -825,6 +826,42 @@ export class OrderService {
     return (
       mappings.find((mapping) => normalizeText(mapping.shippingMethodName) === normalizedName) || null
     );
+  }
+
+  /**
+   * COD collected by the store (pickup) is deposited in the dedicated Zid
+   * pickup treasury. Courier deliveries continue to use the courier-specific
+   * shipping treasury mappings.
+   */
+  private async resolveCodTreasury(
+    order: Order,
+    shippingMethod: { id: string | null; name: string; code: string }
+  ): Promise<ShippingTreasuryMapping | null> {
+    const normalizedCode = normalizeText(shippingMethod.code);
+    const normalizedName = normalizeText(shippingMethod.name);
+    const isPickup =
+      ['pickup', 'pick_up', 'store_pickup', 'self_pickup'].includes(normalizedCode) ||
+      normalizedName.includes('استلام من الفرع') ||
+      normalizedName.includes('استلام من المتجر') ||
+      normalizedName.includes('pickup');
+
+    if (isPickup) {
+      const paymentMapping = await PaymentMapping.findOne({
+        where: { paymentMethodKey: normalizeText(order.paymentMethod), isActive: true },
+      });
+
+      if (paymentMapping) {
+        return {
+          shippingMethodId: shippingMethod.id,
+          shippingMethodName: shippingMethod.name || 'استلام من الفرع',
+          treasuryId: paymentMapping.treasuryId,
+          treasuryName: paymentMapping.treasuryName || paymentMapping.paymentMethodLabel,
+          isActive: true,
+        } as ShippingTreasuryMapping;
+      }
+    }
+
+    return this.resolveShippingTreasury(shippingMethod.id, shippingMethod.name);
   }
 
   private extractDaftraInvoice(response: any): any {
@@ -1186,9 +1223,7 @@ export class OrderService {
     order: Order,
     paymentMapping: PaymentMapping
   ): Promise<boolean> {
-    const isCod = ['cod', 'cash_on_delivery', 'zid_cod'].includes(
-      (paymentMapping.paymentMethodKey || '').toLowerCase().trim()
-    );
+    const isCod = isCodPaymentMethod(paymentMapping.paymentMethodKey);
 
     if (isCod) {
       logger.info(`[OrderService] Order #${order.storeOrderId} is COD. Skipping automated payment record.`);
@@ -1358,6 +1393,9 @@ export class OrderService {
       order.status = 'DRAFT_CREATED';
       order.daftraDraftInvoiceId = invoiceResult.invoiceId;
       order.daftraInvoiceNumber = invoiceResult.invoiceNumber;
+      if (isCodPaymentMethod(order.paymentMethod) && order.codSettlementStatus === 'NOT_APPLICABLE') {
+        order.codSettlementStatus = 'PENDING_DELIVERY';
+      }
       order.statusMessage = paymentRecorded
         ? `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة ومسددة في خزينة (${paymentMapping.treasuryName || paymentMapping.paymentMethodLabel}) بنجاح بعد إعادة المحاولة.`
         : `الفاتورة ${invoiceResult.invoiceNumber} تم إصدارها معتمدة في دفترة (غير مسددة) بعد إعادة المحاولة.`;

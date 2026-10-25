@@ -230,8 +230,10 @@ export class ProductPollerService {
 
       for (const item of candidateProducts) {
         try {
-          await productService.handleIncomingWebhook(item.payload);
-          processedCount++;
+          const processedProduct = await productService.handleIncomingWebhookIfEligible(item.payload);
+          if (processedProduct) {
+            processedCount++;
+          }
 
           if (item.timestamp instanceof Date && !isNaN(item.timestamp.getTime())) {
             lastSuccessfulEventTime = item.timestamp;

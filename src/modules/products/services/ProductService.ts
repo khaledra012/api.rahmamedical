@@ -12,8 +12,32 @@ import {
 import { NotFoundError, ConflictError, AppError } from '../../../shared/errors';
 import { logger } from '../../../shared/helpers/logger';
 import { env } from '../../../config/env';
+import { isDaftraProductAvailableOnline } from '../helpers/productAvailability';
 
 export class ProductService {
+  /**
+   * Ingest only products that Daftra marked as available online.
+   * Existing products are still passed through so an online->offline change
+   * can pause/hide them in Zid instead of leaving stale published records.
+   */
+  public async handleIncomingWebhookIfEligible(
+    payload: DaftraWebhookProductPayload
+  ): Promise<Product | null> {
+    if (isDaftraProductAvailableOnline(payload)) {
+      return this.handleIncomingWebhook(payload);
+    }
+
+    const existing = await Product.findOne({ where: { daftraProductId: payload.id } });
+    if (!existing) {
+      logger.info(
+        `[ProductService] Ignoring Daftra product #${payload.id}: available_online is disabled.`
+      );
+      return null;
+    }
+
+    return this.handleIncomingWebhook(payload);
+  }
+
   /**
    * 1. Ingest Webhook from Daftra with Idempotency Support
    */
@@ -38,6 +62,7 @@ export class ProductService {
     const weight = payload.weight !== undefined ? parseFloat(payload.weight as any) : null;
     const isTaxable = Boolean(payload.is_taxable);
     const taxPercentage = payload.tax_percentage !== undefined ? parseFloat(payload.tax_percentage as any) : null;
+    const availableOnline = isDaftraProductAvailableOnline(payload);
 
     let product = await Product.findOne({ where: { daftraProductId } });
     const incomingDaftraStatus = this.parseDaftraStatus(payload.status, product?.daftraStatus ?? 0);
@@ -58,7 +83,37 @@ export class ProductService {
       product.taxPercentage = taxPercentage;
       product.daftraCategory = payload.category_name || product.daftraCategory;
       product.daftraStatus = incomingDaftraStatus;
+      const wasAvailableOnline = isDaftraProductAvailableOnline(product.rawDaftraData);
       product.rawDaftraData = payload;
+
+      // A product removed from Daftra's online catalog must not remain
+      // published in Zid. Keep the dashboard record for audit/re-activation.
+      if (!availableOnline) {
+        if (product.publishStatus === 'PUBLISHED') {
+          product.zidStatusBeforeDaftraBlock = 'PUBLISHED';
+        }
+        product.publishStatus = 'PAUSED';
+        product.publishError = null;
+        await product.save();
+
+        let mapping = await ProductMapping.findOne({ where: { productId: product.id } });
+        if (!mapping?.zidProductId) {
+          mapping = await this.findAndLinkExistingZidProduct(product, mapping);
+        }
+        if (mapping?.zidProductId) {
+          await this.syncDaftraAvailabilityToZid(product, mapping.zidProductId, false);
+        }
+        return product;
+      }
+
+      // Coming back online requires a fresh dashboard approval; do not
+      // silently republish a product that was previously hidden by this flag.
+      const becameAvailableOnline = !wasAvailableOnline && availableOnline;
+      if (becameAvailableOnline && !isBlockedInDaftra) {
+        product.publishStatus = 'PENDING_REVIEW';
+        product.publishError = null;
+        product.zidStatusBeforeDaftraBlock = null;
+      }
 
       if (isBlockedInDaftra) {
         if (!product.zidStatusBeforeDaftraBlock) {

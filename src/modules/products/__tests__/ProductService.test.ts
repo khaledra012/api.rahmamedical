@@ -24,6 +24,18 @@ describe('ProductService Unit Tests', () => {
   });
 
   describe('handleIncomingWebhook() - Ingestion & Idempotency', () => {
+    it('should ignore a new Daftra product that is not available online', async () => {
+      (Product.findOne as jest.Mock).mockResolvedValue(null);
+
+      const result = await productService.handleIncomingWebhookIfEligible({
+        ...mockDaftraProductWebhook,
+        availabe_online: 0,
+      });
+
+      expect(result).toBeNull();
+      expect(Product.create).not.toHaveBeenCalled();
+    });
+
     it('should ingest new product from Daftra and set status to PENDING_REVIEW with full raw data', async () => {
       (Product.findOne as jest.Mock).mockResolvedValue(null);
       const mockCreatedProduct = {

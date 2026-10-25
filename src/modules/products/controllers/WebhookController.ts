@@ -12,7 +12,16 @@ export class WebhookController {
 
     // Extract product object (Daftra often nests in body.Product or body directly)
     const payload = req.body?.Product || req.body?.data || req.body;
-    const product = await productService.handleIncomingWebhook(payload);
+    const product = await productService.handleIncomingWebhookIfEligible(payload);
+
+    if (!product) {
+      return sendSuccess(
+        res,
+        { productId: null, daftraProductId: payload?.id, status: 'IGNORED_NOT_AVAILABLE_ONLINE' },
+        'تم تجاهل المنتج لأنه غير متاح أونلاين في دفترة',
+        200
+      );
+    }
 
     return sendSuccess(
       res,
@@ -29,7 +38,16 @@ export class WebhookController {
     logger.info('[Webhook] Received Daftra product.updated event');
 
     const payload = req.body?.Product || req.body?.data || req.body;
-    const product = await productService.handleIncomingWebhook(payload);
+    const product = await productService.handleIncomingWebhookIfEligible(payload);
+
+    if (!product) {
+      return sendSuccess(
+        res,
+        { productId: null, daftraProductId: payload?.id, status: 'IGNORED_NOT_AVAILABLE_ONLINE' },
+        'تم تجاهل المنتج لأنه غير متاح أونلاين في دفترة',
+        200
+      );
+    }
 
     return sendSuccess(
       res,

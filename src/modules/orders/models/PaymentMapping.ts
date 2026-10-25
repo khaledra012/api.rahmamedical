@@ -95,6 +95,7 @@ export const DEFAULT_PAYMENT_MAPPINGS = [
   { paymentMethodKey: 'cod', paymentMethodLabel: 'الدفع عند الاستلام (COD)', treasuryId: 35, treasuryName: 'تسوية الدفع عند الاستلام', storeType: 'ZID' as const },
   { paymentMethodKey: 'cash_on_delivery', paymentMethodLabel: 'الدفع عند الاستلام (COD)', treasuryId: 35, treasuryName: 'تسوية الدفع عند الاستلام', storeType: 'ZID' as const },
   { paymentMethodKey: 'zid_cod', paymentMethodLabel: 'الدفع عند الاستلام (COD)', treasuryId: 35, treasuryName: 'تسوية الدفع عند الاستلام', storeType: 'ZID' as const },
+  { paymentMethodKey: 'zid_cop', paymentMethodLabel: 'الدفع عند الاستلام من الفرع (ZID COP)', treasuryId: 31, treasuryName: 'zid_cop', storeType: 'ZID' as const },
   { paymentMethodKey: 'bank_transfer', paymentMethodLabel: 'تحويل بنكي', treasuryId: 18, treasuryName: 'zidpay', storeType: 'ZID' as const },
   { paymentMethodKey: 'trendyol_prepaid', paymentMethodLabel: 'تسوية ترينديول (Prepaid)', treasuryId: 25, treasuryName: 'prepaid_trendyol', storeType: 'TRENDYOL' as const },
 ];
